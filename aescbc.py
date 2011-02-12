@@ -4,13 +4,18 @@ Command-line tool for encrypting and decrypting files.  Uses the AES
 algorithm in CBC mode.  Passphrase is converted to a key using the
 PBKDF2 algorithm (rfc2898), HMAC, and SHA-256.
 
-Requires the PyCrypto library.
+Tested under Python 2.7.
+
+For faster operation, install the PyCrypto library:
+http://www.dlitz.net/software/pycrypto/
+http://www.voidspace.org.uk/python/modules.shtml#pycrypto
 """
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.0'
+__version__ = '1.1'
 
+import getpass
 import hmac
 import hashlib
 import os
@@ -21,10 +26,8 @@ import sys
 try:
     from Crypto.Cipher import AES
 except ImportError:
-    print >>sys.stderr, "The PyCrypto library is required:"
-    print >>sys.stderr, "http://www.dlitz.net/software/pycrypto/"
-    print >>sys.stderr, "http://www.voidspace.org.uk/python/modules.shtml#pycrypto"
-    sys.exit(1)
+    print >>sys.stderr, "Using pyaes. Install PyCrypto for better performance."
+    import pyaes as AES
 
 def pbkdf2_256bit(passphrase, salt):
     """Converts a unicode passphrase into a 32-byte key using
@@ -48,8 +51,14 @@ def pbkdf2_256bit(passphrase, salt):
 
 def main(args):
     args.extend([None,None,None,None])
-    (cmd, passphrase, infilename, outfilename) = args[:4]
-    if cmd in ('-e', '-d') and passphrase:
+    (cmd, infilename, outfilename, passphrasefilename) = args[:4]
+    if cmd in ('-e', '-d'):
+        if passphrasefilename == '-':
+            passphrase = sys.stdin.readline().rstrip('\r\n').decode('utf-8')
+        elif passphrasefilename:
+            passphrase = open(passphrasefilename, 'rb').read().decode('utf-8')
+        else:
+            passphrase = getpass.getpass('Passphrase: ').decode('utf-8')
         infile = sys.stdin
         outfile = sys.stdout
         if infilename and infilename != '-':
@@ -65,13 +74,13 @@ def main(args):
             outfile.close()
     else:
         print "AES CBC-mode encryption tool with HMAC-SHA256-PBKDF2"
-        print "Usage: aescbc -e|-d PASSPHRASE [INFILE [OUTFILE]]"
+        print "Usage: aescbc -e|-d [INFILE [OUTFILE [PASSPHRASEFILE]]]"
         return 1
 
 def encrypt(passphrase, infile, outfile):
-    salt = os.urandom(16)
-    outfile.write(salt)
-    key = pbkdf2_256bit(passphrase, salt)
+    aes_key_salt = os.urandom(16)
+    outfile.write(aes_key_salt)
+    aes_key = pbkdf2_256bit(passphrase, aes_key_salt)
     
     # For a discussion of CBC mode and how to choose IVs, see
     # NIST Special Publication 800-38A, 2001 Edition
@@ -79,51 +88,64 @@ def encrypt(passphrase, infile, outfile):
     # http://csrc.nist.gov/publications/nistpubs/800-38a/sp800-38a.pdf
     iv = os.urandom(16)
     outfile.write(iv)
-    aes = AES.new(key, AES.MODE_CBC, iv)
+    aes = AES.new(aes_key, AES.MODE_CBC, iv)
+
+    mac_key_salt = os.urandom(16)
+    outfile.write(aes.encrypt(mac_key_salt))
+    mac_key = pbkdf2_256bit(passphrase, mac_key_salt)
+    mac = hmac.new(mac_key, digestmod=hashlib.sha256)
+    
     CHUNK_SIZE = 1024
     while True:
         chunk = infile.read(CHUNK_SIZE)
         print >>sys.stderr, "Read %r bytes" % len(chunk)
+        if len(chunk):
+            mac.update(chunk)
         if len(chunk) != CHUNK_SIZE:
+            chunk = chunk + mac.digest()
             # Pad file with 0x80 and enough 0x00 to fill the last block
             bytes_in_last_block = len(chunk) % 16
             padding_needed = 16 - bytes_in_last_block
             print >>sys.stderr, "Need %r bytes of padding" % padding_needed
             chunk = chunk + '\x80' + '\x00' * (padding_needed - 1)
-            print >>sys.stderr, "Writing %r bytes" % len(chunk)
             assert(len(chunk) % 16 == 0)
             outfile.write(aes.encrypt(chunk))
             break
         else:
-            print >>sys.stderr, "Writing %r bytes" % len(chunk)
             assert(len(chunk) % 16 == 0)
             outfile.write(aes.encrypt(chunk))
     return 0
 
 def decrypt(passphrase, infile, outfile):
-    salt = infile.read(16)
-    iv = infile.read(16)
-    if len(salt + iv) != 32:
-        print >>sys.stderr, "ERROR: Failed to read salt and IV from file."
+    header = infile.read(48)
+    if len(header) != 48:
+        print >>sys.stderr, "ERROR: Failed to read header from file."
         return 1
-    key = pbkdf2_256bit(passphrase, salt)
-    aes = AES.new(key, AES.MODE_CBC, iv)
+    aes_key_salt = header[0:16]
+    iv = header[16:32]
+    aes_key = pbkdf2_256bit(passphrase, aes_key_salt)
+    aes = AES.new(aes_key, AES.MODE_CBC, iv)
+    
+    mac_key_salt = aes.decrypt(header[32:48])
+    mac_key = pbkdf2_256bit(passphrase, mac_key_salt)
+    mac = hmac.new(mac_key, digestmod=hashlib.sha256)
+    
     CHUNK_SIZE = 1024
-    lastchunk = ''
+    olderchunk = ''
+    oldchunk = ''
     while True:
-        chunk = infile.read(CHUNK_SIZE)
-        print >>sys.stderr, "Read %r bytes" % len(chunk)
-        if len(chunk) == 0:
-            break
-        elif len(chunk) == CHUNK_SIZE:
-            outfile.write(aes.decrypt(lastchunk))
-            lastchunk = chunk
-        else:
-            outfile.write(aes.decrypt(lastchunk))
-            lastchunk = chunk
+        newchunk = infile.read(CHUNK_SIZE)
+        if len(newchunk):
+            cleartext = aes.decrypt(olderchunk)
+            mac.update(cleartext)
+            outfile.write(cleartext)
+            olderchunk = oldchunk
+            oldchunk = newchunk
+        if len(newchunk) != CHUNK_SIZE:
             break
     
     result = 0
+    lastchunk = olderchunk + oldchunk
     if len(lastchunk) % 16 != 0:
         bytes_needed = 16 - (len(lastchunk) % 16)
         print >>sys.stderr, "ERROR: File is damaged.  It does not end on a 16-byte boundary."
@@ -146,7 +168,20 @@ def decrypt(passphrase, infile, outfile):
         print >>sys.stderr, "ERROR: File ends with no padding.  Passphrase is incorrect or file is damaged."
         result = 1
     
+    if len(cleartext) >= 32:
+        mac_digest = cleartext[-32:]
+        cleartext = cleartext[:-32]
+    else:
+        print >>sys.stderr, "ERROR: MAC not found.  File is truncated, damaged, or passphrase is incorrect."
+        result = 1
+        mac_digest = ''
+    
+    mac.update(cleartext)
     outfile.write(cleartext)
+    mac_digest2 = mac.digest()
+    if mac_digest != mac_digest2:
+        print >>sys.stderr, "ERROR: MAC mismatch.  File is damaged or passphrase is incorrect."
+        result = 1
     return result
 
 if __name__ == '__main__':
