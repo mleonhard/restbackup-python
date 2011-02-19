@@ -33,7 +33,7 @@ while True:
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.1'
+__version__ = '1.2'
 
 import httplib
 import json
@@ -221,11 +221,9 @@ class BackupApiCaller(HttpCaller):
         import chlorocrypt
         if not hasattr(data, 'read'):
             data = StringReader(data)
-        mac = chlorocrypt.MacAddingReader(data, passphrase)
-        pad = chlorocrypt.PaddingAddingReader(mac)
-        enc = chlorocrypt.EncryptingReader(pad, passphrase)
-        extra_headers = {'Content-Length':str(len(enc))}
-        response = self.call('PUT', name, enc, extra_headers)
+        encrypted = chlorocrypt.EncryptingReader(data, passphrase)
+        extra_headers = {'Content-Length':str(len(encrypted))}
+        response = self.call('PUT', name, encrypted, extra_headers)
         return response.read()
     
     def get(self, name):
@@ -244,17 +242,14 @@ class BackupApiCaller(HttpCaller):
         Raises RestBackupException on network error.  Raises
         WrongPassphraseException if the provided passphrase is
         incorrect.  Raises DataDamagedException if file was corrupted
-        on the network.  Due to padding, the value returned by
-        len(stream_obj) may be up to 15 bytes larger than the actual
-        number of bytes available.
+        on the network.  Due to padding, the stream may yield up to 16
+        bytes less than the value of len(stream).
         """
         import chlorocrypt
         http_response = self.call('GET', name)
         http_reader = HttpResponseReader(http_response)
-        dec = chlorocrypt.DecryptingReader(http_reader, passphrase)
-        pad = chlorocrypt.PaddingStrippingReader(dec)
-        mac = chlorocrypt.MacCheckingReader(pad, passphrase)
-        return mac
+        decrypted = chlorocrypt.DecryptingReader(http_reader, passphrase)
+        return decrypted
     
     def list(self):
         """Lists the files available on the backup account.  Returns a

@@ -14,7 +14,7 @@ http://www.voidspace.org.uk/python/modules.shtml#pycrypto
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.3'
+__version__ = '1.4'
 
 import getpass
 import hmac
@@ -58,6 +58,7 @@ class MacAddingReader(RewindableSizedInputStream):
         stream_length = 16 + len(stream) + 32
         RewindableSizedInputStream.__init__(self, stream_length)
         self.stream = stream
+        self.stream_keep = stream
         if not salt:
             salt = os.urandom(16)
         self.salt = salt
@@ -82,14 +83,13 @@ class MacAddingReader(RewindableSizedInputStream):
                 self.stream = None
                 self.suffix = self.mac.digest()
                 self.mac = None
-        if self.suffix:
-            chunk = self.suffix[:size]
-            self.suffix = self.suffix[size:]
-            return chunk
-        return ''
+        chunk = self.suffix[:size]
+        self.suffix = self.suffix[size:]
+        return chunk
     
     def rewind(self):
         self.prefix = self.salt
+        self.stream = self.stream_keep
         self.suffix = None
         self.mac = hmac.new(self.key, digestmod=hashlib.sha256)
         self.stream.rewind()
@@ -99,7 +99,8 @@ class MacAddingReader(RewindableSizedInputStream):
         self.key = None
         self.mac = None
         self.prefix = None
-        self.stream.close()
+        self.stream_keep.close()
+        self.stream_keep = None
         self.stream = None
         self.suffix = None
 
@@ -156,15 +157,14 @@ class MacCheckingReader(SizedInputStream):
                     raise BadMacException("The file has been damaged or the"
                                           " passphrase is incorrect.")
             return self.read_once(size)
-        if self.buffer:
-            chunk = self.buffer[:size]
-            self.buffer = self.buffer[size:]
-            return chunk
-        return ''
+        chunk = self.buffer[:size]
+        self.buffer = self.buffer[size:]
+        return chunk
     
     def close(self):
         self.mac = None
-        self.stream.close()
+        if self.stream:
+            self.stream.close()
         self.stream = None
         self.buffer = None
 
@@ -181,6 +181,7 @@ class PaddingAddingReader(RewindableSizedInputStream):
         assert(stream_length % 16 == 0)
         RewindableSizedInputStream.__init__(self, stream_length)
         self.stream = stream
+        self.stream_keep = stream
         self.rewind()
     
     def read_once(self, size):
@@ -201,11 +202,13 @@ class PaddingAddingReader(RewindableSizedInputStream):
 
     def rewind(self):
         self.suffix = self.padding
+        self.stream = self.stream_keep
         self.stream.rewind()
     
     def close(self):
         self.suffix = None
-        self.stream.close()
+        self.stream_keep.close()
+        self.stream_keep = None
         self.stream = None
 
 
@@ -221,6 +224,7 @@ class PaddingStrippingReader(SizedInputStream):
         """Stream must be a SizedInputStream."""
         SizedInputStream.__init__(self, len(stream))
         self.stream = stream
+        self.stream_keep = stream
         self.buffer = ''
     
     def read_once(self, size):
@@ -264,15 +268,78 @@ class PaddingStrippingReader(SizedInputStream):
     
     def close(self):
         self.buffer = None
+        self.stream_keep.close()
+        self.stream_keep = None
+        self.stream = None
+
+
+class NullBlockAddingReader(RewindableSizedInputStream):
+    """Prefixes the stream with a block of nulls.
+    
+    Use NullBlockChecker to check for the block and detect a bad
+    passphrase during decryption.
+    """
+    def __init__(self, stream):
+        """Stream must be a RewindableSizedInputStream."""
+        stream_length = 16 + len(stream)
+        RewindableSizedInputStream.__init__(self, stream_length)
+        self.stream = stream
+        self.rewind()
+    
+    def read_once(self, size):
+        if size < 1:
+            raise ValueError("size must be greater than zero")
+        if self.prefix:
+            chunk = self.prefix[:size]
+            self.prefix = self.prefix[size:]
+            return chunk
+        return self.stream.read_once(size)
+    
+    def rewind(self):
+        self.prefix = '\x00' * 16
+        self.stream.rewind()
+    
+    def close(self):
+        self.prefix = None
         self.stream.close()
         self.stream = None
 
-class EncryptingReader(RewindableSizedInputStream):
+
+class NullBlockRemovingReader(SizedInputStream):
+    """Removes the first 16-byte block from the stream and verifies
+    that it is all nulls.
+    
+    Raises DataTruncatedException if the 16-byte block cannot be read.
+    Raises WrongPassphraseException if this block is not all nulls.
+    """
+    def __init__(self, stream):
+        """Stream must be a SizedInputStream."""
+        if len(stream) < 16:
+            raise DataTruncatedException("File too short to contain header")
+        stream_length = len(stream) - 16
+        SizedInputStream.__init__(self, stream_length)
+        self.stream = stream
+        first_block = stream.read(16)
+        if len(first_block) != 16:
+            raise DataTruncatedException("Unable to read header")
+        if [c for c in first_block if c != '\x00']:
+            raise WrongPassphraseException("The passphrase is incorrect or "
+                                           "the file header was damaged.")
+    
+    def read_once(self, size):
+        return self.stream.read_once(size)
+    
+    def close(self):
+        self.stream.close()
+        self.stream = None
+
+
+class AesCbcEncryptingReader(RewindableSizedInputStream):
     """Encrypts the stream with AES in CBC mode.
     
-    Prefixes the stream with a 16-byte salt, a 16-byte IV, and a
-    16-byte block of nulls.  Generates a 256-bit key using PBKDF2 with
-    1000 rounds of HMAC-SHA-256.  Decrypt with DecryptingReader.
+    Prefixes the ciphertext with a 16-byte salt and 16-byte IV.
+    Generates a 256-bit key using PBKDF2 with 1000 rounds of
+    HMAC-SHA-256.  Decrypt with DecryptingReader.
     
     Raises ValueError if input stream does not end on a 16-byte block
     boundary.  Use PaddingAddingReader to ensure stream ends on a
@@ -283,9 +350,10 @@ class EncryptingReader(RewindableSizedInputStream):
         must be a byte string."""
         if len(stream) % 16:
             raise ValueError("Stream length must be a multiple of 16")
-        stream_length = 16 + 16 + 16 + len(stream)
+        stream_length = 16 + 16 + len(stream)
         RewindableSizedInputStream.__init__(self, stream_length)
         self.stream = stream
+        self.stream_keep = stream
         if not salt:
             salt = os.urandom(16)
         if not iv:
@@ -304,11 +372,11 @@ class EncryptingReader(RewindableSizedInputStream):
     def read_once(self, size):
         if size < 1:
             raise ValueError("size must be greater than zero")
-        elif self.buffer:
+        if self.buffer:
             chunk = self.buffer[:size]
             self.buffer = self.buffer[size:]
             return chunk
-        elif self.stream:
+        if self.stream:
             bytes_needed = size
             if bytes_needed % 16:
                 bytes_needed += 16 - bytes_needed % 16 # round up
@@ -316,54 +384,51 @@ class EncryptingReader(RewindableSizedInputStream):
             if len(chunk) != bytes_needed:
                 self.stream = None
             if len(chunk) % 16:
-                raise DataDamagedException("Data ended in middle of block.")
+                raise ValueError("Data ended in middle of block.")
             self.buffer = self.aes.encrypt(chunk)
             return self.read_once(size)
-        else:
-            return ''
+        return ''
     
     def rewind(self):
         self.aes = AES.new(self.key, AES.MODE_CBC, self.iv)
-        self.buffer = self.salt + self.iv + self.aes.encrypt('\x00' * 16)
+        self.buffer = self.salt + self.iv
+        self.stream = self.stream_keep
         self.stream.rewind()
     
     def close(self):
         self.buffer = None
         self.aes = None
-        self.stream.close()
+        self.stream_keep.close()
+        self.stream_keep = None
         self.stream = None
 
-class DecryptingReader(SizedInputStream):
+
+class AesCbcDecryptingReader(SizedInputStream):
     """Decrypts a stream that was encrypted with EncryptingReader.
     
-    Removes the 16-byte salt, 16-byte IV, and 16-byte block of nulls
-    from the beginning of the stream.  Generates a 256-bit key using
-    PBKDF2 with 1000 rounds of HMAC-SHA-256.  Decrypts the stream
-    using AES in CBC mode.  Raises DataTruncatedException if file is
-    too short to contain expected header or the file ends in the
-    middle of a block.
+    Removes the 16-byte salt and 16-byte IV from the beginning of the
+    ciphertext.  Generates a 256-bit key using PBKDF2 with 1000 rounds
+    of HMAC-SHA-256.  Decrypts the stream using AES in CBC mode.
+    Raises DataTruncatedException if file is too short to contain
+    expected header or the file ends in the middle of a block.
     """
     def __init__(self, stream, passphrase, key=None):
         """Stream must be a SizedInputStream.  Passphrase must be a
         byte string."""
         if len(stream) < 32:
-            raise DataTruncatedException("File is too short to contain a "
-                                         "32-byte header.")
-        stream_length = -16 - 16 - 16 + len(stream)
+            raise DataTruncatedException("File too short to contain header")
+        stream_length = -16 - 16 + len(stream)
         SizedInputStream.__init__(self, stream_length)
         self.stream = stream
-        header = stream.read(48)
-        if len(header) != 48:
-            raise DataTruncatedException("File is missing 48-byte header.")
+        self.stream_keep = stream
+        header = stream.read(32)
+        if len(header) != 32:
+            raise DataTruncatedException("Unable to read header")
         salt = header[:16]
-        iv = header[16:32]
+        iv = header[16:]
         if not key:
             key = pbkdf2_256bit(passphrase, salt)
         self.aes = AES.new(key, AES.MODE_CBC, iv)
-        null_block = self.aes.decrypt(header[32:])
-        if any([ord(c) for c in null_block]):
-            raise WrongPassphraseException("The passphrase is incorrect or "
-                                           "the file header was damaged.")
         self.buffer = ''
     
     def read_once(self, size):
@@ -381,7 +446,7 @@ class DecryptingReader(SizedInputStream):
             if len(chunk) != bytes_needed: # EOF
                 self.stream = None
             if len(chunk) % 16:
-                raise DataDamagedException("Data ended in middle of block.")
+                raise DataTruncatedException("Data ended in middle of block.")
             self.buffer = self.buffer + self.aes.decrypt(chunk)
             return self.read_once(size)
         return ''
@@ -389,15 +454,71 @@ class DecryptingReader(SizedInputStream):
     def close(self):
         self.buffer = None
         self.aes = None
+        self.stream_keep.close()
+        self.stream_keep = None
+        self.stream = None
+
+
+class EncryptingReader(RewindableSizedInputStream):
+    """Encrypts the stream with AES in CBC mode.
+    
+    This is a convenience class that transforms the plaintext into
+    ciphertext using a pipeline of PaddingAddingReader,
+    NullBlockAddingReader, AesCbcEncryptingReader, and MacAddingReader.
+    """
+    def __init__(self, stream, passphrase, salt=None, iv=None, key=None):
+        s1 = PaddingAddingReader(stream)
+        s2 = NullBlockAddingReader(s1)
+        s3 = AesCbcEncryptingReader(s2, passphrase, salt, iv, key)
+        s4 = MacAddingReader(s3, passphrase, salt, key)
+        RewindableSizedInputStream.__init__(self, len(s4))
+        self.stream = s4
+    
+    def read_once(self, size):
+        return self.stream.read_once(size)
+    
+    def rewind(self):
+        self.stream.rewind()
+    
+    def close(self):
         self.stream.close()
         self.stream = None
+
+
+class DecryptingReader(SizedInputStream):
+    """Decrypts the stream with AES in CBC mode.
+    
+    This is a convenience class that transforms the ciphertext into
+    plaintext using a pipeline of MacCheckingReader,
+    AesCbcDecryptingReader, NullBlockRemovingReader, and
+    PaddingStrippingReader.  Due to padding, the stream may yield up
+    to 16 bytes less than the value of len(stream).
+    """
+    def __init__(self, stream, passphrase, key=None):
+        s1 = MacCheckingReader(stream, passphrase, key)
+        s2 = AesCbcDecryptingReader(s1, passphrase, key)
+        s3 = NullBlockRemovingReader(s2)
+        s4 = PaddingStrippingReader(s3)
+        SizedInputStream.__init__(self, len(s4))
+        self.stream = s4
+    
+    def read_once(self, size):
+        return self.stream.read_once(size)
+    
+    def rewind(self):
+        self.stream.rewind()
+    
+    def close(self):
+        self.stream.close()
+        self.stream = None
+
 
 def pbkdf2_256bit(passphrase, salt):
     """Converts a unicode passphrase into a 32-byte key using RFC2898
     PBKDF2 with 1000 rounds of HMAC-SHA-256.  Passphrase and salt must
     be byte strings."""
     passphrase_bytes = passphrase.encode('utf-8')
-    prf = lambda key, msg: hmac.new(key, msg, digestmod=hashlib.sha256).digest()
+    prf = lambda p, data: hmac.new(p, data, digestmod=hashlib.sha256).digest()
     block = prf(passphrase_bytes, salt + '\x00\x00\x00\x01')
     (a,b,c,d,e,f,g,h) = struct.unpack('LLLLLLLL', block)
     for x in xrange(1, 1000):
@@ -442,22 +563,18 @@ def main(args):
         return 1
 
 def encrypt(passphrase, infile_reader, outfile):
-    mac = MacAddingReader(infile_reader, passphrase)
-    pad = PaddingAddingReader(mac)
-    enc = EncryptingReader(pad, passphrase)
+    encrypted = EncryptingReader(infile_reader, passphrase)
     while True:
-        chunk = enc.read(1024)
+        chunk = encrypted.read(1024)
         if not chunk:
             break
         outfile.write(chunk)
     return 0
 
 def decrypt(passphrase, infile_reader, outfile):
-    dec = DecryptingReader(infile_reader, passphrase)
-    pad = PaddingStrippingReader(dec)
-    mac = MacCheckingReader(pad, passphrase)
+    decrypted = DecryptingReader(infile_reader, passphrase)
     while True:
-        chunk = mac.read(1024)
+        chunk = decrypted.read(1024)
         if not chunk:
             break
         outfile.write(chunk)
