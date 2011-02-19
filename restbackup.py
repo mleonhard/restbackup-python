@@ -222,7 +222,10 @@ class BackupApiCaller(HttpCaller):
         if not hasattr(data, 'read'):
             data = StringReader(data)
         encrypted = chlorocrypt.EncryptingReader(data, passphrase)
-        extra_headers = {'Content-Length':str(len(encrypted))}
+        extra_headers = {
+            'Content-Length':str(len(encrypted)),
+            'User-Agent' : HTTP_USER_AGENT + ' chlorocrypt/' + chlorocrypt.__version__
+            }
         response = self.call('PUT', name, encrypted, extra_headers)
         return response.read()
     
@@ -246,7 +249,9 @@ class BackupApiCaller(HttpCaller):
         bytes less than the value of len(stream).
         """
         import chlorocrypt
-        http_response = self.call('GET', name)
+        extra_headers = { 'User-Agent' : \
+                              HTTP_USER_AGENT + ' chlorocrypt/' + chlorocrypt.__version__ }
+        http_response = self.call('GET', name, extra_headers=extra_headers)
         http_reader = HttpResponseReader(http_response)
         decrypted = chlorocrypt.DecryptingReader(http_reader, passphrase)
         return decrypted
