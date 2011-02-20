@@ -33,7 +33,7 @@ while True:
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.2'
+__version__ = '1.3'
 
 import httplib
 import json
@@ -56,7 +56,7 @@ def make_http_user_agent_string():
 
 HTTP_USER_AGENT = make_http_user_agent_string()
 
-class RestBackupException(Exception): pass
+class RestBackupException(IOError): pass
 
 class HttpCaller:
     """Base class that performs HTTP requests to RestBackup(tm)
@@ -66,11 +66,14 @@ class HttpCaller:
     """
     
     def __init__(self, access_url):
+        """Access_url must be a url of the form
+        'https://USER:PASS@host/'.  Raises ValueError if access url is
+        malformed."""
         ACCESS_URL_REGEX = r'^(https?)://([a-zA-Z0-9]+):([a-zA-Z0-9]+)' \
             r'@([-.a-zA-Z0-9]+(?::[0-9]+)?)/$'
         match_obj = re.match(ACCESS_URL_REGEX, access_url)
         if not match_obj:
-            raise RestBackupException("Invalid access url %r" % (access_url))
+            raise ValueError("Invalid access url %r" % (access_url))
         (scheme, username, password, host) = match_obj.groups()
         self.access_url = access_url
         self.scheme = scheme
@@ -88,6 +91,12 @@ class HttpCaller:
             return httplib.HTTPSConnection(self.host)
     
     def call(self, method, uri, body=None, extra_headers={}):
+        """Performs an HTTP request, retrying on 5xx error, with
+        exponential backoff.  Body may be None, a string, or a
+        RewindableSizedInputStream.
+        
+        Raises RestBackupException on error.
+        """
         # HTTP PUT from Python explained in:
         # http://infomesh.net/2001/QuickPut/QuickPut.txt
         encoded_uri = uri.encode('utf-8')
@@ -111,13 +120,19 @@ class HttpCaller:
             
             time.sleep(retry_delay_seconds)
             retry_delay_seconds *= 2 # exponential backoff
+            if hasattr(body, read):
+                body.rewind()
         
         # raise last 5xx
         raise RestBackupException("Gave up after attempt %s failed: %s %s"
                                   % (attempt, response.status, response.reason))
     
     def post(self, uri, params_dict):
-        """Perform an HTTP POST request to the API"""
+        """Perform an HTTP POST request.  Params_dict must be a
+        dictionary with string keys values.
+        
+        Raises RestBackupException on error.
+        """
         body = urllib.urlencode(params_dict)
         extra_header = {'Content-Type':'application/x-www-form-urlencoded'}
         return self.call('POST', uri, body, extra_header)
@@ -127,17 +142,21 @@ class ManagementApiCaller(HttpCaller):
     """Interface class for the RestBackup(tm) Management API
     
     Instantiate like this:
-    management_api_access_url = 'https://HF7X7S:7I1Mxw7xxQEW@us.restbackup.com/'
-    management_api = restbackup.ManagementApiCaller(management_api_access_url)
+    
+    man_api_access_url = 'https://HF7X7S:7I1xxQEW@us.restbackup.com/'
+    man_api = restbackup.ManagementApiCaller(man_api_access_url)
     """
     
     def create_backup_account(self, description, retain_uploads_days=365,
                               delay_seconds=NEW_ACCOUNT_DELAY_SECONDS):
         """Adds a backup account, returns a BackupApiCaller object
         
-        You can obtain the new backup account details from the returned object:
-        b = management_api.create_backup_account('My Backup Account')
-        print b.access_url, b.description, b.retain_uploads_days, b.account_id
+        Raises RestBackupException on error.  You can obtain the new
+        backup account details from the returned object:
+
+        b = man_api.create_backup_account('Account for customer 8734')
+        print b.access_url, b.description, b.retain_uploads_days, \
+        b.account_id
         """
         params = {'description':description, 'retaindays':retain_uploads_days}
         response = self.post('/', params)
@@ -151,9 +170,12 @@ class ManagementApiCaller(HttpCaller):
         """Looks up the backup account with the specified account id,
         returns a BackupApiCaller object
         
-        You can obtain the backup account details from the returned object:
-        b = management_api.get_backup_account('/171633a5-233f-9098-bac14260013')
-        print b.access_url, b.description, b.retain_uploads_days, b.account_id
+        Raises RestBackupException on error.  You can obtain the
+        backup account details from the returned object:
+        
+        b = man_api.get_backup_account('/17163a5-233f-9098-bac142601')
+        print b.access_url, b.description, b.retain_uploads_days, \
+        b.account_id
         """
         response = self.call('GET', account_id)
         response_body = response.read()
@@ -163,13 +185,15 @@ class ManagementApiCaller(HttpCaller):
     
     def delete_backup_account(self, account_id):
         """Deletes the backup account with the specified account id.
-        Returns a string containing the response body."""
+        Returns a string containing the response body.  Raises
+        RestBackupException on error."""
         response = self.call('DELETE', account_id)
         return response.read()
     
     def list_backup_accounts(self):
         """Downloads the list of backup accounts.  Returns a list
-        3-tuples: (account_id, retain_uploads_days, description)"""
+        3-tuples: (account_id, retain_uploads_days, description).
+        Raises RestBackupException on error."""
         response = self.call('GET', '/')
         response_body = response.read()
         array = json.loads(response_body)
@@ -192,6 +216,8 @@ class BackupApiCaller(HttpCaller):
     """
     def __init__(self, access_url, retain_uploads_days=None, description=None,
                  account_id=None):
+        """Access_url must have the form 'https://USER:PASS@host/'.
+        Raises ValueError if access url is malformed."""
         self.access_url = access_url
         self.retain_uploads_days = retain_uploads_days
         self.description = description
@@ -202,7 +228,8 @@ class BackupApiCaller(HttpCaller):
         """Uploads the provided data to the backup account, storing it
         with the specified name.  Data may be a byte string or a
         RewindableSizedInputStream object.  Returns a string
-        containing the response body.
+        containing the response body.  Raises RestBackupException on
+        error.
         """
         extra_headers = {'Content-Length':str(len(data))}
         response = self.call('PUT', name, data, extra_headers)
@@ -224,7 +251,8 @@ class BackupApiCaller(HttpCaller):
         encrypted = chlorocrypt.EncryptingReader(data, passphrase)
         extra_headers = {
             'Content-Length':str(len(encrypted)),
-            'User-Agent' : HTTP_USER_AGENT + ' chlorocrypt/' + chlorocrypt.__version__
+            'User-Agent' : HTTP_USER_AGENT + ' chlorocrypt/' + \
+                chlorocrypt.__version__
             }
         response = self.call('PUT', name, encrypted, extra_headers)
         return response.read()
@@ -234,7 +262,8 @@ class BackupApiCaller(HttpCaller):
         object.
         
         Use len(stream_obj) to find the length of the file.  Call
-        stream_obj.read([size]) to get the data."""
+        stream_obj.read([size]) to get the data.  Raises
+        RestBackupException on error."""
         response = self.call('GET', name)
         return HttpResponseReader(response)
     
@@ -258,7 +287,8 @@ class BackupApiCaller(HttpCaller):
     
     def list(self):
         """Lists the files available on the backup account.  Returns a
-        list of tuples: (name,size,date,createtime,deletetime)
+        list of tuples: (name,size,date,createtime,deletetime).
+        Raises DataDamagedException
         """
         extra_headers = {'Accept':'application/json'}
         response = self.call('GET', '/', extra_headers=extra_headers)
