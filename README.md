@@ -4,7 +4,7 @@ RestBackup(tm) Client Library
 
 This module provides convenient classes for making calls to the
 RestBackup(tm) Backup and Management APIs.  These APIs are documented
-at http://dev.restbackup.com/developers
+at [http://www.restbackup.com/developers](http://www.restbackup.com/developers).
 
 Example usage:
 
