@@ -2,25 +2,42 @@ from restbackup import StringReader
 from chlorocrypt import BadMacException
 from chlorocrypt import DataDamagedException
 from chlorocrypt import DataTruncatedException
-from chlorocrypt import WrongPassphraseException
 from chlorocrypt import MacAddingReader
 from chlorocrypt import MacCheckingReader
 from chlorocrypt import PaddingAddingReader
 from chlorocrypt import PaddingStrippingReader
-from chlorocrypt import NullBlockAddingReader
-from chlorocrypt import NullBlockRemovingReader
 from chlorocrypt import AesCbcEncryptingReader
 from chlorocrypt import AesCbcDecryptingReader
 from chlorocrypt import EncryptingReader
 from chlorocrypt import DecryptingReader
 from chlorocrypt import pbkdf2_256bit
+import os
 import unittest
+
 
 class TestMacAddingReader(unittest.TestCase):
     def setUp(self):
         self.passphrase = 'passphrase'
         self.salt = 's' * 16
         self.key = 'k' * 32
+        a_macs = ['lYfXRyLeGZ1f3TAwZcwXyd9u4YiFipS/tCKCzKa+as8=',
+                  '0ZpdKMDXgcInldwIU5aR3b2zYaTTiSZkIAivDi9ZYTo=',
+                  'mNf6xviWmLSIprpZSZjCDV6eMPvbLBf3yGufhVfn2xA=',
+                  'xNl0cxGM+bgIcebN708B26zw2/cVUWauPuYN+cDgkX0=',
+                  'DotXYegR3qdJ9pCFIjIGZ0JG5XgHG/rx8W3K+vvJiko=',
+                  '1wbw90zUNYr1YR02JZR1igGEb7lmpLWRdPZm1BsQYpI=',
+                  'KKyHoN2uNQ/sKOOD+aa4AMRf6wlHzrobU4xqrzgdXbg=',
+                  '2boWTspGiLPqRIwqcqO0BWrqByZn/n5yrkhWmoBkUxk=',
+                  'PVOuWYZjaHxSyqDgOs25D9TWVOBXa/twINsofuHt2s8=',
+                  'Rf2YRH6Apa7V+sf2qa/JRWNh9DLFHnDPbMYxHelpCo0=',
+                  'VDFlncTsT1hOPsWmJcpjsgdUOiRzWOLU3Jj3ifPUCPc=',
+                  'DYXTYqPgYJF/yKfin2AwYJ49rtbSORUarUF4YLfwdCU=',
+                  'bptfyfb+pL8TP+AngOUA6LjjPKJZJYY5ElSD9yaHFaY=',
+                  'zn3HBIZUvvt2puvY0diJ2RmumaE9Mfyrx2HWfryzADE=',
+                  'RhnMGzrsi+498DwF/LbTL9QblyohJ5M97mKCvm+jIr0=',
+                  'YQpcosYIuPVCQkP7gRXBwhCe0HYXXymYoCyKU162wmY=',
+                  'Pv8VoC3Y5DGZPcI3CNWgTUwm3GNRsmX1k163BFPXZjQ=']
+        self.a_macs = [mac.decode('base64') for mac in a_macs]
     
     def test_no_bytes(self):
         data = StringReader('')
@@ -54,19 +71,42 @@ class TestMacAddingReader(unittest.TestCase):
     
     def test_one_mb(self):
         data = StringReader('a' * 1024*1024)
-        mac = 'YQpcosYIuPVCQkP7gRXBwhCe0HYXXymYoCyKU162wmY='.decode('base64')
         reader = MacAddingReader(data, self.passphrase, self.salt, self.key)
-        self.assertEqual(len(reader), 16 + 1024*1024 + 32)
+        self.assertEqual(len(reader), 16 + 1024*1024 + 32*16)
         self.assertEqual(reader.read(16), self.salt)
         self.assertEqual(reader.read(1), 'a')
-        self.assertEqual(reader.read(1023), 'a'*1023)
-        self.assertEqual(reader.read(1023*1024), 'a'*1023*1024)
-        self.assertEqual(reader.read(32), mac)
+        self.assertEqual(reader.read(65535), 'a'*65535)
+        self.assertEqual(reader.read(32), self.a_macs.pop(0))
+        for n in xrange(0, 14):
+            self.assertEqual(reader.read(65536), 'a'*65536)
+            self.assertEqual(reader.read(32), self.a_macs.pop(0))
+        self.assertEqual(reader.read(65536), 'a'*65536)
+        self.assertEqual(reader.read(32), self.a_macs.pop(0))
+        self.assertEqual(len(self.a_macs), 1)
+        self.assertEqual(reader.read(1), '')
+    
+    def test_one_mb_plus(self):
+        data = StringReader('a' * (1024*1024 + 42))
+        reader = MacAddingReader(data, self.passphrase, self.salt, self.key)
+        self.assertEqual(len(reader), 16 + 1024*1024 + 42 + 32*17)
+        self.assertEqual(reader.read(16), self.salt)
+        self.assertEqual(reader.read(1), 'a')
+        self.assertEqual(reader.read(65535), 'a'*65535)
+        self.assertEqual(reader.read(32), self.a_macs.pop(0))
+        for n in xrange(0, 14):
+            self.assertEqual(reader.read(65536), 'a'*65536)
+            self.assertEqual(reader.read(32), self.a_macs.pop(0))
+        self.assertEqual(reader.read(65536), 'a'*65536)
+        self.assertEqual(reader.read(32), self.a_macs.pop(0))
+        block = reader.read(1024*1024)
+        self.assertEqual(block[:42], 'a'*42)
+        self.assertEqual(block[42:], self.a_macs.pop(0))
+        self.assertEqual(len(self.a_macs), 0)
         self.assertEqual(reader.read(1), '')
     
     def test_real_key(self):
         data = StringReader('1234567')
-        mac = 'pjhdkY3tLUUFuc3Yy7XNGv9OnNcRrvIdePDfsTwC5Jc='.decode('base64')
+        mac = '+6ZSbYn460hpoowKHZkwTbxQFWkUAjlpXsbKByZGA+4='.decode('base64')
         reader = MacAddingReader(data, self.passphrase, self.salt)
         self.assertEqual(len(reader), 16 + 7 + 32)
         self.assertEqual(reader.read(16), self.salt)
@@ -144,6 +184,24 @@ class TestMacCheckingReader(unittest.TestCase):
         self.passphrase = 'passphrase'
         self.salt = 's' * 16
         self.key = 'k' * 32
+        a_macs = ['lYfXRyLeGZ1f3TAwZcwXyd9u4YiFipS/tCKCzKa+as8=',
+                  '0ZpdKMDXgcInldwIU5aR3b2zYaTTiSZkIAivDi9ZYTo=',
+                  'mNf6xviWmLSIprpZSZjCDV6eMPvbLBf3yGufhVfn2xA=',
+                  'xNl0cxGM+bgIcebN708B26zw2/cVUWauPuYN+cDgkX0=',
+                  'DotXYegR3qdJ9pCFIjIGZ0JG5XgHG/rx8W3K+vvJiko=',
+                  '1wbw90zUNYr1YR02JZR1igGEb7lmpLWRdPZm1BsQYpI=',
+                  'KKyHoN2uNQ/sKOOD+aa4AMRf6wlHzrobU4xqrzgdXbg=',
+                  '2boWTspGiLPqRIwqcqO0BWrqByZn/n5yrkhWmoBkUxk=',
+                  'PVOuWYZjaHxSyqDgOs25D9TWVOBXa/twINsofuHt2s8=',
+                  'Rf2YRH6Apa7V+sf2qa/JRWNh9DLFHnDPbMYxHelpCo0=',
+                  'VDFlncTsT1hOPsWmJcpjsgdUOiRzWOLU3Jj3ifPUCPc=',
+                  'DYXTYqPgYJF/yKfin2AwYJ49rtbSORUarUF4YLfwdCU=',
+                  'bptfyfb+pL8TP+AngOUA6LjjPKJZJYY5ElSD9yaHFaY=',
+                  'zn3HBIZUvvt2puvY0diJ2RmumaE9Mfyrx2HWfryzADE=',
+                  'RhnMGzrsi+498DwF/LbTL9QblyohJ5M97mKCvm+jIr0=',
+                  'YQpcosYIuPVCQkP7gRXBwhCe0HYXXymYoCyKU162wmY=',
+                  'Pv8VoC3Y5DGZPcI3CNWgTUwm3GNRsmX1k163BFPXZjQ=']
+        self.a_macs = [mac.decode('base64') for mac in a_macs]
     
     def test_no_salt(self):
         self.assertRaises(DataTruncatedException, MacCheckingReader, 
@@ -233,8 +291,8 @@ class TestMacCheckingReader(unittest.TestCase):
         self.assertRaises(BadMacException, reader.read, 8)
     
     def test_1mb(self):
-        mac = 'YQpcosYIuPVCQkP7gRXBwhCe0HYXXymYoCyKU162wmY='.decode('base64')
-        input = StringReader(self.salt + 'a' * 1024*1024 + mac)
+        data = ''.join(['a'*64*1024 + self.a_macs.pop(0) for x in xrange(16)])
+        input = StringReader(self.salt + data)
         reader = MacCheckingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 1024*1024)
         self.assertEqual(reader.read(1), 'a')
@@ -243,14 +301,31 @@ class TestMacCheckingReader(unittest.TestCase):
         self.assertEqual(reader.read(1), '')
         self.assertEqual(reader.read(1), '')
     
-    def test_1mb_bad_mac(self):
-        mac = 'XQpcosYIuPVCQkP7gRXBwhCe0HYXXymYoCyKU162wmY='.decode('base64')
-        input = StringReader(self.salt + 'a' * 1024*1024 + mac)
+    def test_1mb_plus_42(self):
+        data = ['a'*64*1024 + self.a_macs.pop(0) for x in xrange(16)]
+        data.append('a'*42 + self.a_macs.pop(0))
+        self.assertEqual([], self.a_macs)
+        input = StringReader(self.salt + ''.join(data))
         reader = MacCheckingReader(input, self.passphrase, self.key)
+        self.assertEqual(len(reader), 1024*1024 + 42)
+        self.assertEqual(reader.read(1), 'a')
+        self.assertEqual(reader.read(1023), 'a'*1023)
+        self.assertEqual(reader.read(1024*1024), 'a'*(1023*1024 + 42))
+        self.assertEqual(reader.read(1), '')
+        self.assertEqual(reader.read(1), '')
+    
+    def test_1mb_bad_mac(self):
+        self.a_macs[3] = 'X' + self.a_macs[3][1:]
+        data = ['a'*64*1024 + self.a_macs.pop(0) for x in xrange(16)]
+        data.append('a'*42 + self.a_macs.pop(0))
+        self.assertEqual([], self.a_macs)
+        input = StringReader(self.salt + ''.join(data))
+        reader = MacCheckingReader(input, self.passphrase, self.key)
+        self.assertEqual(reader.read(128*1024), 'a'*128*1024)
         self.assertRaises(BadMacException, reader.read, 1024*1024 + 1)
     
     def test_real_key(self):
-        mac = 'pjhdkY3tLUUFuc3Yy7XNGv9OnNcRrvIdePDfsTwC5Jc='.decode('base64')
+        mac = '+6ZSbYn460hpoowKHZkwTbxQFWkUAjlpXsbKByZGA+4='.decode('base64')
         input = StringReader(self.salt + '1234567' + mac)
         reader = MacCheckingReader(input, self.passphrase)
         self.assertEqual(len(reader), 7)
@@ -272,6 +347,34 @@ class TestMacCheckingReader(unittest.TestCase):
         reader.close()
         self.assertRaises(Exception, reader.read, 1)
 
+
+class TestMacReaders(unittest.TestCase):
+    def setUp(self):
+        self.passphrase = 'passphrase'
+        self.salt = 's' * 16
+        self.key = 'k' * 32
+    
+    def test_1mb(self):
+        data = os.urandom(1024*1024)
+        input = StringReader(data)
+        adding_reader = MacAddingReader(input, self.passphrase)
+        checking_reader = MacCheckingReader(adding_reader, self.passphrase)
+        self.assertEqual(len(checking_reader), 1024*1024)
+        self.assertEqual(checking_reader.read(1024*1024), data)
+        self.assertEqual(checking_reader.read(1), '')
+        self.assertEqual(checking_reader.read(1), '')
+    
+    def test_1mb_plus_some(self):
+        data = os.urandom(1024*1024 + 42)
+        input = StringReader(data)
+        adding_reader = MacAddingReader(input, self.passphrase)
+        checking_reader = MacCheckingReader(adding_reader, self.passphrase)
+        self.assertEqual(len(checking_reader), 1024*1024 + 42)
+        self.assertEqual(checking_reader.read(42), data[:42])
+        self.assertEqual(checking_reader.read(1024*1024), data[42:])
+        self.assertEqual(checking_reader.read(1), '')
+        self.assertEqual(checking_reader.read(1), '')
+    
 
 class TestPaddingAddingReader(unittest.TestCase):
     def test_no_bytes(self):
@@ -496,172 +599,28 @@ class TestPaddingStrippingReader(unittest.TestCase):
         self.assertRaises(Exception, reader.read, 1)
 
 
-class TestNullBlockAddingReader(unittest.TestCase):
-    def setUp(self):
-        self.null_block = '\x00' * 16
+class TestPaddingReaders(unittest.TestCase):
+    def test_1mb(self):
+        data = os.urandom(1024*1024)
+        input = StringReader(data)
+        adding_reader = PaddingAddingReader(input)
+        stripping_reader = PaddingStrippingReader(adding_reader)
+        self.assertEqual(len(stripping_reader), 1024*1024 + 16)
+        self.assertEqual(stripping_reader.read(1024*1024), data)
+        self.assertEqual(stripping_reader.read(1), '')
+        self.assertEqual(stripping_reader.read(1), '')
     
-    def test_no_bytes(self):
-        reader = NullBlockAddingReader(StringReader(''))
-        self.assertEqual(len(reader), 16 + 0)
-        self.assertEqual(reader.read(16 + 0), self.null_block + '')
-        self.assertEqual(reader.read(1), '')
+    def test_1mb_plus_some(self):
+        data = os.urandom(1024*1024 + 42)
+        input = StringReader(data)
+        adding_reader = PaddingAddingReader(input)
+        stripping_reader = PaddingStrippingReader(adding_reader)
+        self.assertEqual(len(stripping_reader), 1024*1024 + 48)
+        self.assertEqual(stripping_reader.read(42), data[:42])
+        self.assertEqual(stripping_reader.read(1024*1024), data[42:])
+        self.assertEqual(stripping_reader.read(1), '')
+        self.assertEqual(stripping_reader.read(1), '')
     
-    def test_1_byte(self):
-        reader = NullBlockAddingReader(StringReader('a'))
-        self.assertEqual(len(reader), 16 + 1)
-        self.assertEqual(reader.read(16 + 1), self.null_block + 'a')
-        self.assertEqual(reader.read(1), '')
-    
-    def test_7_bytes(self):
-        data = '1234567'
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(len(reader), 16 + 7)
-        self.assertEqual(reader.read(16), self.null_block)
-        self.assertEqual(reader.read(1024), data)
-        self.assertEqual(reader.read(1), '')
-    
-    def test_16_bytes(self):
-        data = '0123456789abcdef'
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(len(reader), 16 + 16)
-        self.assertEqual(reader.read(16), self.null_block)
-        self.assertEqual(reader.read(1024), data)
-        self.assertEqual(reader.read(1), '')
-    
-    def test_32_bytes(self):
-        data = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(len(reader), 16 + 32)
-        self.assertEqual(reader.read(16), self.null_block)
-        self.assertEqual(reader.read(1024), data)
-        self.assertEqual(reader.read(1), '')
-    
-    def test_read_all(self):
-        data = '1234567'
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(len(reader), 16 + 7)
-        self.assertEqual(reader.read(), self.null_block + data)
-        self.assertEqual(reader.read(), '')
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(reader.read(18), self.null_block + data[:2])
-        self.assertEqual(reader.read(), data[2:])
-        self.assertEqual(reader.read(), '')
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(reader.read(25), self.null_block + data)
-        self.assertEqual(reader.read(), '')
-    
-    def test_read_all_neg(self):
-        data = '1234567'
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(len(reader), 16 + 7)
-        self.assertEqual(reader.read(-1), self.null_block + data)
-        self.assertEqual(reader.read(-1), '')
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(reader.read(18), self.null_block + data[:2])
-        self.assertEqual(reader.read(-1), data[2:])
-        self.assertEqual(reader.read(-1), '')
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(reader.read(25), self.null_block + data)
-        self.assertEqual(reader.read(-1), '')
-    
-    def test_rewind(self):
-        data = '1234567'
-        reader = NullBlockAddingReader(StringReader(data))
-        self.assertEqual(len(reader), 16 + 7)
-        self.assertEqual(reader.read(16 + 1), self.null_block + '1')
-        reader.rewind()
-        self.assertEqual(len(reader), 16 + 7)
-        self.assertEqual(reader.read(16 + 1), self.null_block + '1')
-        self.assertEqual(reader.read(3), '234')
-        self.assertEqual(reader.read(1024), '567')
-        self.assertEqual(reader.read(1024), '')
-        reader.rewind()
-        self.assertEqual(len(reader), 16 + 7)
-        self.assertEqual(reader.read(16 + 1), self.null_block + '1')
-        self.assertEqual(reader.read(3), '234')
-        self.assertEqual(reader.read(1024), '567')
-        self.assertEqual(reader.read(1024), '')
-    
-    def test_close(self):
-        reader = NullBlockAddingReader(StringReader('1234567'))
-        reader.read()
-        reader.close()
-        self.assertRaises(Exception, reader.read, 1)
-
-
-class TestNullBlockRemovingReader(unittest.TestCase):
-    def setUp(self):
-        self.null_block = '\x00' * 16
-    
-    def test_no_bytes(self):
-        reader = NullBlockRemovingReader(StringReader(self.null_block + ''))
-        self.assertEqual(len(reader), 0)
-        self.assertEqual(reader.read(1), '')
-    
-    def test_1_byte(self):
-        reader = NullBlockRemovingReader(StringReader(self.null_block + 'a'))
-        self.assertEqual(len(reader), 1)
-        self.assertEqual(reader.read(1), 'a')
-        self.assertEqual(reader.read(1), '')
-    
-    def test_16_bytes(self):
-        data = '0123456789abcdef'
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(len(reader), 16)
-        self.assertEqual(reader.read(1), data[:1])
-        self.assertEqual(reader.read(1024), data[1:])
-        self.assertEqual(reader.read(1), '')
-    
-    def test_32_bytes(self):
-        data = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(len(reader), 32)
-        self.assertEqual(reader.read(1), data[:1])
-        self.assertEqual(reader.read(1024), data[1:])
-        self.assertEqual(reader.read(1), '')
-    
-    def test_read_all(self):
-        data = '0123456789abcdef'
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(len(reader), 16)
-        self.assertEqual(reader.read(), data)
-        self.assertEqual(reader.read(), '')
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(reader.read(2), data[:2])
-        self.assertEqual(reader.read(), data[2:])
-        self.assertEqual(reader.read(), '')
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(reader.read(16), data)
-        self.assertEqual(reader.read(), '')
-    
-    def test_read_all_neg(self):
-        data = '0123456789abcdef'
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(len(reader), 16)
-        self.assertEqual(reader.read(-1), data)
-        self.assertEqual(reader.read(-1), '')
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(reader.read(2), data[:2])
-        self.assertEqual(reader.read(-1), data[2:])
-        self.assertEqual(reader.read(-1), '')
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        self.assertEqual(reader.read(16), data)
-        self.assertEqual(reader.read(-1), '')
-    
-    def test_close(self):
-        data = '1234567'
-        reader = NullBlockRemovingReader(StringReader(self.null_block + data))
-        reader.read()
-        reader.close()
-        self.assertRaises(Exception, reader.read, 1)
-    
-    def test_wrong_passphrase(self):
-        non_null_block = '\x01' + '\x00' * 15
-        data = '0123456789abcdef'
-        input = StringReader(non_null_block + data)
-        self.assertRaises(WrongPassphraseException, 
-                          NullBlockRemovingReader, input)
-
 
 class TestAesCbcEncryptingReader(unittest.TestCase):
     def setUp(self):
@@ -708,7 +667,7 @@ class TestAesCbcEncryptingReader(unittest.TestCase):
     
     def test_16_bytes_with_real_key(self):
         data = '0123456789abcdef'
-        ciphertext = 'u2VlDewnDNd+6AzfKDCb+g=='.decode('base64')
+        ciphertext = '3poinep3R7LRLIfd+uSZfw=='.decode('base64')
         reader = AesCbcEncryptingReader(StringReader(data), self.passphrase,
                                         self.salt, self.iv)
         self.assertEqual(len(reader), 16 + 16 + 16)
@@ -845,7 +804,7 @@ class TestAesCbcDecryptingReader(unittest.TestCase):
     
     def test_16_bytes_with_real_key(self):
         data = '0123456789abcdef'
-        ciphertext = 'u2VlDewnDNd+6AzfKDCb+g=='.decode('base64')
+        ciphertext = '3poinep3R7LRLIfd+uSZfw=='.decode('base64')
         input = StringReader(self.salt + self.iv + ciphertext)
         reader = AesCbcDecryptingReader(input, self.passphrase)
         self.assertEqual(len(reader), 16)
@@ -896,6 +855,37 @@ class TestAesCbcDecryptingReader(unittest.TestCase):
         #self.assertRaises(Exception, reader.read, 1)
 
 
+class TestAesCbcReaders(unittest.TestCase):
+    def setUp(self):
+        self.passphrase = 'passphrase'
+        self.salt = 's' * 16
+        self.iv = 'i' * 16
+        self.key = 'k' * 32
+    
+    def test_1mb(self):
+        data = os.urandom(1024*1024)
+        input = StringReader(data)
+        encrypting_reader = AesCbcEncryptingReader(input, self.passphrase,
+                                                   self.salt, self.iv, self.key)
+        decrypting_reader = AesCbcDecryptingReader(encrypting_reader, self.passphrase, self.key)
+        self.assertEqual(len(decrypting_reader), 1024*1024)
+        self.assertEqual(decrypting_reader.read(1024*1024), data)
+        self.assertEqual(decrypting_reader.read(1), '')
+        self.assertEqual(decrypting_reader.read(1), '')
+    
+    def test_1mb_plus_some(self):
+        data = os.urandom(1024*1024 + 48)
+        input = StringReader(data)
+        encrypting_reader = AesCbcEncryptingReader(input, self.passphrase,
+                                                   self.salt, self.iv, self.key)
+        decrypting_reader = AesCbcDecryptingReader(encrypting_reader, self.passphrase, self.key)
+        self.assertEqual(len(decrypting_reader), 1024*1024 + 48)
+        self.assertEqual(decrypting_reader.read(42), data[:42])
+        self.assertEqual(decrypting_reader.read(1024*1024 + 6), data[42:])
+        self.assertEqual(decrypting_reader.read(1), '')
+        self.assertEqual(decrypting_reader.read(1), '')
+    
+
 class TestEncryptingReader(unittest.TestCase):
     def setUp(self):
         self.passphrase = 'passphrase'
@@ -905,50 +895,47 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_no_bytes(self):
         data = ''
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qhw3' \
-            'xjWEjSUTA3L9TcQItP4E='.decode('base64')
-        mac = 'JkQpFN1ZOVAt4F0bwLHHN9GgfFye/2pie83t7SpcAiU='.decode('base64')
+        ciphertext = 'XdwcsHWSePqdnGOXLtXopA=='.decode('base64')
+        mac = 'MZH3egS1YJG0I9DrMMFFVi/JvnGCu5ipmGY82vSveoA='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 0 + 16)) + 32)
-        self.assertEqual(reader.read(16 + (16 + 16 + (16 + 0 + 16)) + 32),
+        self.assertEqual(len(reader), 16 + (16 + 16 + (0 + 16)) + 32)
+        self.assertEqual(reader.read(16 + (16 + 16 + (0 + 16)) + 32),
                          self.salt + self.salt + self.iv + ciphertext + mac)
         self.assertEqual(reader.read(1), '')
     
     def test_1_byte(self):
         data = 'a'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh3h' \
-            'crQNnQM6uNF6Zxl5m21g='.decode('base64')
-        mac = 'rUUeNV1NzbolYgPHp5IEKZ9ycfNYzmvqu1UsjLD1nZI='.decode('base64')
+        ciphertext = 'wmCwhQl9IPU8KvuF1rZhWw=='.decode('base64')
+        mac = 'Dk4tWUE1drYdtZ/6zPJXAxVw58sEuDbAQVrQNx3+rBs='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 1 + 15)) + 32)
-        self.assertEqual(reader.read(16 + (16 + 16 + (16 + 1 + 15)) + 32),
+        self.assertEqual(len(reader), 16 + (16 + 16 + (1 + 15)) + 32)
+        self.assertEqual(reader.read(16 + (16 + 16 + (1 + 15)) + 32),
                          self.salt + self.salt + self.iv + ciphertext + mac)
         self.assertEqual(reader.read(1), '')
     
     def test_16_bytes(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16 + 16)) + 32)
+        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
         self.assertEqual(reader.read(16), self.salt)
         self.assertEqual(reader.read(16 + 16), self.salt + self.iv)
-        self.assertEqual(reader.read(16 + 16 + 16), ciphertext)
+        self.assertEqual(reader.read(16 + 16), ciphertext)
         self.assertEqual(reader.read(32), mac)
         self.assertEqual(reader.read(1), '')
     
     def test_32_bytes(self):
         data = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh0oUvRaX/+eX4DOJ+YFxYUUEHekxg/' \
-            'dle9SRKPqC7V29KRD7mwxkp0tb\n685PgiE6rw=='.decode('base64')
-        mac = 'qeRPmZx0WT2xy0LBEqAu4uNJvSt5XCHj2UHEbbU4JO4='.decode('base64')
+        ciphertext = 'J5+ATEVX9bnkx4xhMf88LJq4iEwEgIV+Z/AW0h+' \
+            'fA8a5iqiAxgJBqlNiLbTzCib/'.decode('base64')
+        mac = 'Zj4rhjIoI97LWoglO9TUcWHrEIP8yBh3ygzpRRINTWk='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 32 + 16)) + 32)
+        self.assertEqual(len(reader), 16 + (16 + 16 + (32 + 16)) + 32)
         self.assertEqual(reader.read(16), self.salt)
         self.assertEqual(reader.read(16 + 16), self.salt + self.iv)
         self.assertEqual(reader.read(1024), ciphertext + mac)
@@ -956,12 +943,11 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_16_bytes_with_real_key(self):
         data = '0123456789abcdef'
-        ciphertext = 'aQA5Gos0LVF2R4hGmZHc+bACchp86Xy1Qzhi' \
-            'zXpYiavQywXMBOM+ZQhZotghph4R'.decode('base64')
-        mac = 'h65UW7QMUnLUWKh9aTPCYIZ5NKY1x+vcMtEkDh2mjbg='.decode('base64')
+        ciphertext = '3poinep3R7LRLIfd+uSZf47+1N3S97MsxOx97k4rX9c='.decode('base64')
+        mac = 'ImYdegy8QLCggXd9n0YrQY3eeYejMS5SWEPUv3XUOd4='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv)
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16 + 16)) + 32)
+        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
         self.assertEqual(reader.read(16), self.salt)
         self.assertEqual(reader.read(16 + 16), self.salt + self.iv)
         self.assertEqual(reader.read(1024), ciphertext + mac)
@@ -981,9 +967,8 @@ class TestEncryptingReader(unittest.TestCase):
 
     def test_read_all(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(reader.read(),
@@ -1003,9 +988,8 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_read_all_neg(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(reader.read(-1),
@@ -1025,23 +1009,22 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_rewind(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16 + 16)) + 32)
+        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
         self.assertEqual(reader.read(48 + 1),
                          self.salt + self.salt + self.iv + ciphertext[:1])
         reader.rewind()
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16 + 16)) + 32)
+        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
         self.assertEqual(reader.read(48 + 1),
                          self.salt + self.salt + self.iv + ciphertext[:1])
         self.assertEqual(reader.read(3), ciphertext[1:4])
         self.assertEqual(reader.read(1024), ciphertext[4:] + mac)
         self.assertEqual(reader.read(1024), '')
         reader.rewind()
-        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16 + 16)) + 32)
+        self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
         self.assertEqual(reader.read(48 + 1),
                          self.salt + self.salt + self.iv + ciphertext[:1])
         self.assertEqual(reader.read(3), ciphertext[1:4])
@@ -1077,11 +1060,6 @@ class TestDecryptingReader(unittest.TestCase):
         self.assertRaises(DataTruncatedException, DecryptingReader, input, 
                           self.passphrase, self.key)
     
-    def test_no_null_block(self):
-        input = StringReader(self.salt + self.salt + self.iv + self.mac)
-        self.assertRaises(DataTruncatedException, DecryptingReader, input, 
-                          self.passphrase, self.key)
-    
     def test_no_padding(self):
         ciphertext = 'GrEi4QMwqyNQX1nODd1Qhw=='.decode('base64')
         mac = 'V/LKyFj8MoZ3ZS3WZtG3xqwogrPg8Bn2z0SY/Jp3IGE='.decode('base64')
@@ -1091,9 +1069,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_no_data(self):
         data = ''
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qhw3' \
-            'xjWEjSUTA3L9TcQItP4E='.decode('base64')
-        mac = 'JkQpFN1ZOVAt4F0bwLHHN9GgfFye/2pie83t7SpcAiU='.decode('base64')
+        ciphertext = 'XdwcsHWSePqdnGOXLtXopA=='.decode('base64')
+        mac = 'MZH3egS1YJG0I9DrMMFFVi/JvnGCu5ipmGY82vSveoA='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 16)
@@ -1101,9 +1078,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_1_byte(self):
         data = 'a'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh3h' \
-            'crQNnQM6uNF6Zxl5m21g='.decode('base64')
-        mac = 'rUUeNV1NzbolYgPHp5IEKZ9ycfNYzmvqu1UsjLD1nZI='.decode('base64')
+        ciphertext = 'wmCwhQl9IPU8KvuF1rZhWw=='.decode('base64')
+        mac = 'Dk4tWUE1drYdtZ/6zPJXAxVw58sEuDbAQVrQNx3+rBs='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 16)
@@ -1112,9 +1088,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_partial_block(self):
         data = ''
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qhw3' \
-            'xjWEjSUTA3L9TcQItP4E='.decode('base64') + 'x'
-        mac = 'JkQpFN1ZOVAt4F0bwLHHN9GgfFye/2pie83t7SpcAiU='.decode('base64')
+        ciphertext = 'XdwcsHWSePqdnGOXLtXopA=='.decode('base64') + 'x'
+        mac = 'JkCaQY5QRPkBgk79Jf9w5oFt6IkE9Xql48LUyEpF7fQ='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 17)
@@ -1122,9 +1097,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_16_bytes(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 32)
@@ -1134,9 +1108,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_16_bytes_plus_partial_block(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64') + 'x'
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64') + 'x'
+        mac = '/X4tGXAoj9x8hBgyFv/SjD+P4EkF/lJ8SzLIrGm8ucw='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 33)
@@ -1146,9 +1119,9 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_32_bytes(self):
         data = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh0oUvRaX/+eX4DOJ+YFxYUUEHekxg/' \
-            'dle9SRKPqC7V29KRD7mwxkp0tb\n685PgiE6rw=='.decode('base64')
-        mac = 'qeRPmZx0WT2xy0LBEqAu4uNJvSt5XCHj2UHEbbU4JO4='.decode('base64')
+        ciphertext = 'J5+ATEVX9bnkx4xhMf88LJq4iEwEgIV+Z/AW0h+' \
+            'fA8a5iqiAxgJBqlNiLbTzCib/'.decode('base64')
+        mac = 'Zj4rhjIoI97LWoglO9TUcWHrEIP8yBh3ygzpRRINTWk='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 48)
@@ -1157,9 +1130,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_16_bytes_with_real_key(self):
         data = '0123456789abcdef'
-        ciphertext = 'aQA5Gos0LVF2R4hGmZHc+bACchp86Xy1Qzhi' \
-            'zXpYiavQywXMBOM+ZQhZotghph4R'.decode('base64')
-        mac = 'h65UW7QMUnLUWKh9aTPCYIZ5NKY1x+vcMtEkDh2mjbg='.decode('base64')
+        ciphertext = '3poinep3R7LRLIfd+uSZf47+1N3S97MsxOx97k4rX9c='.decode('base64')
+        mac = 'ImYdegy8QLCggXd9n0YrQY3eeYejMS5SWEPUv3XUOd4='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase)
         self.assertEqual(len(reader), 32)
@@ -1168,9 +1140,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_read_all(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(reader.read(), '0123456789abcdef')
@@ -1187,9 +1158,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_read_all_neg(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(reader.read(-1), '0123456789abcdef')
@@ -1206,13 +1176,12 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_wrong_passphrase(self):
         data = '0123456789abcdef'
-        ciphertext = 'aQA5Gos0LVF2R4hGmZHc+bACchp86Xy1Qzhi' \
-            'zXpYiavQywXMBOM+ZQhZotghph4R'.decode('base64')
-        mac = 'h65UW7QMUnLUWKh9aTPCYIZ5NKY1x+vcMtEkDh2mjbg='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
+        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
-        self.assertRaises(WrongPassphraseException, DecryptingReader, 
+        self.assertRaises(BadMacException, DecryptingReader, 
                           input, self.passphrase + 'x')
-
+    
     def test_close(self):
         data = '0123456789abcdef'
         ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
@@ -1224,13 +1193,51 @@ class TestDecryptingReader(unittest.TestCase):
         reader.close()
         self.assertRaises(Exception, reader.read, 1)
 
+
+class TestCryptingReaders(unittest.TestCase):
+    def setUp(self):
+        self.passphrase = 'passphrase'
+        self.salt = 's' * 16
+        self.iv = 'i' * 16
+        self.key = 'k' * 32
+    
+    def test_1mb(self):
+        data = os.urandom(1024*1024)
+        input = StringReader(data)
+        encrypting_reader = EncryptingReader(input, self.passphrase,
+                                             self.salt, self.iv, self.key)
+        decrypting_reader = DecryptingReader(encrypting_reader, self.passphrase, self.key)
+        self.assertEqual(len(decrypting_reader), 1024*1024 + 16)
+        self.assertEqual(decrypting_reader.read(1024*1024), data)
+        self.assertEqual(decrypting_reader.read(1), '')
+        self.assertEqual(decrypting_reader.read(1), '')
+    
+    def test_1mb_plus_some(self):
+        data = os.urandom(1024*1024 + 42)
+        input = StringReader(data)
+        encrypting_reader = EncryptingReader(input, self.passphrase,
+                                             self.salt, self.iv, self.key)
+        decrypting_reader = DecryptingReader(encrypting_reader, self.passphrase, self.key)
+        self.assertEqual(len(decrypting_reader), 1024*1024 + 48)
+        self.assertEqual(decrypting_reader.read(42), data[:42])
+        self.assertEqual(decrypting_reader.read(1024*1024), data[42:])
+        self.assertEqual(decrypting_reader.read(1), '')
+        self.assertEqual(decrypting_reader.read(1), '')
+
+
 class TestPbkdf2(unittest.TestCase):
     def test_pbkdf2_256bit(self):
         salt = 's' * 16
         passphrase = "passphrase"
+        # verify key length
         self.assertEqual(len(pbkdf2_256bit(passphrase, salt)), 32)
-        key1 = pbkdf2_256bit(passphrase, salt).encode('base64').strip()
+        # 1000 rounds
+        key1 = pbkdf2_256bit(passphrase, salt, 1000).encode('base64').strip()
         key2 = 'XY0B6MwJylxvoD8GiHFblbAZ99/FAl/kGNih5ehc6OA='
+        self.assertEqual(key1, key2)
+        # default 4096 rounds
+        key1 = pbkdf2_256bit(passphrase, salt).encode('base64').strip()
+        key2 = 'H2emsRWOYFcO1iFe3V9AaimVe5UDGlR+OUH7dYjcUcI='
         self.assertEqual(key1, key2)
 
 unittest.main()
