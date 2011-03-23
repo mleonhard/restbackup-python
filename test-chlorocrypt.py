@@ -380,7 +380,7 @@ class TestPaddingAddingReader(unittest.TestCase):
     def test_no_bytes(self):
         reader = PaddingAddingReader(StringReader(''))
         self.assertEqual(len(reader), 16)
-        self.assertEqual(reader.read(100), '\x80' + '\x00' * 15)
+        self.assertEqual(reader.read(100), '\x10'*16)
         self.assertEqual(reader.read(1), '')
     
     def test_1_byte(self):
@@ -388,21 +388,21 @@ class TestPaddingAddingReader(unittest.TestCase):
         reader = PaddingAddingReader(StringReader(data))
         self.assertEqual(len(reader), 16)
         self.assertEqual(reader.read(0), '')
-        self.assertEqual(reader.read(100), data + '\x80' + '\x00' * 14)
+        self.assertEqual(reader.read(100), data + '\x0f'*15)
         self.assertEqual(reader.read(1), '')
     
     def test_7_bytes(self):
         data = '1234567'
         reader = PaddingAddingReader(StringReader(data))
         self.assertEqual(len(reader), 16)
-        self.assertEqual(reader.read(100), data + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(100), data + '\x09'*9)
         self.assertEqual(reader.read(1), '')
     
     def test_15_bytes(self):
         data = '0123456789abcde'
         reader = PaddingAddingReader(StringReader(data))
         self.assertEqual(len(reader), 16)
-        self.assertEqual(reader.read(100), data + '\x80')
+        self.assertEqual(reader.read(100), data + '\x01')
         self.assertEqual(reader.read(1), '')
     
     def test_16_bytes(self):
@@ -410,43 +410,41 @@ class TestPaddingAddingReader(unittest.TestCase):
         reader = PaddingAddingReader(StringReader(data))
         self.assertEqual(len(reader), 32)
         self.assertEqual(reader.read(2), '01')
-        self.assertEqual(reader.read(17),
-                         '23456789abcdef' + '\x80' + '\x00' * 2)
-        self.assertEqual(reader.read(100), '\x00' * 13)
+        self.assertEqual(reader.read(17), '23456789abcdef' + '\x10'*3)
+        self.assertEqual(reader.read(100), '\x10'*13)
         self.assertEqual(reader.read(1), '')
     
     def test_1mb(self):
-        data = 'a' * 1024*1024
+        data = 'a'*1024*1024
         reader = PaddingAddingReader(StringReader(data))
         self.assertEqual(len(reader), 1024*1024 + 16)
         self.assertEqual(reader.read(1), 'a')
         self.assertEqual(reader.read(1023), 'a'*1023)
-        self.assertEqual(reader.read(1024*1024),
-                         'a'*1023*1024 + '\x80' + '\x00' * 15)
+        self.assertEqual(reader.read(1024*1024), 'a'*1023*1024 + '\x10'*16)
         self.assertEqual(reader.read(1), '')
 
     def test_read_all(self):
         reader = PaddingAddingReader(StringReader('1234567'))
-        self.assertEqual(reader.read(), '1234567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(), '1234567' + '\x09'*9)
         self.assertEqual(reader.read(), '')
         reader = PaddingAddingReader(StringReader('1234567'))
         self.assertEqual(reader.read(2), '12')
-        self.assertEqual(reader.read(), '34567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(), '34567' + '\x09'*9)
         self.assertEqual(reader.read(), '')
         reader = PaddingAddingReader(StringReader('1234567'))
-        self.assertEqual(reader.read(16), '1234567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(16), '1234567' + '\x09'*9)
         self.assertEqual(reader.read(), '')
 
     def test_read_all_neg(self):
         reader = PaddingAddingReader(StringReader('1234567'))
-        self.assertEqual(reader.read(-1), '1234567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(-1), '1234567' + '\x09'*9)
         self.assertEqual(reader.read(-1), '')
         reader = PaddingAddingReader(StringReader('1234567'))
         self.assertEqual(reader.read(2), '12')
-        self.assertEqual(reader.read(-1), '34567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(-1), '34567' + '\x09'*9)
         self.assertEqual(reader.read(-1), '')
         reader = PaddingAddingReader(StringReader('1234567'))
-        self.assertEqual(reader.read(16), '1234567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(16), '1234567' + '\x09'*9)
         self.assertEqual(reader.read(-1), '')
 
     def test_rewind(self):
@@ -457,13 +455,13 @@ class TestPaddingAddingReader(unittest.TestCase):
         self.assertEqual(len(reader), 7 + 9)
         self.assertEqual(reader.read(1), '1')
         self.assertEqual(reader.read(3), '234')
-        self.assertEqual(reader.read(1024), '567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(1024), '567' + '\x09'*9)
         self.assertEqual(reader.read(1024), '')
         reader.rewind()
         self.assertEqual(len(reader), 7 + 9)
         self.assertEqual(reader.read(1), '1')
         self.assertEqual(reader.read(3), '234')
-        self.assertEqual(reader.read(1024), '567' + '\x80' + '\x00' * 8)
+        self.assertEqual(reader.read(1024), '567' + '\x09'*9)
         self.assertEqual(reader.read(1024), '')
     
     def test_close(self):
@@ -476,14 +474,11 @@ class TestPaddingAddingReader(unittest.TestCase):
 class TestPaddingStrippingReader(unittest.TestCase):
     def test_no_padding(self):
         reader = PaddingStrippingReader(StringReader(''))
+        self.assertEqual(len(reader), 0)
         self.assertRaises(DataDamagedException, reader.read, 1)
     
-    def test_minimal_padding(self):
-        reader = PaddingStrippingReader(StringReader('\x80'))
-        self.assertEqual(reader.read(1), '')
-    
     def test_no_bytes(self):
-        padded_data = '\x80' + '\x00' * 15
+        padded_data = '\x10'*16
         reader = PaddingStrippingReader(StringReader(padded_data))
         self.assertEqual(len(reader), 16)
         self.assertEqual(reader.read(100), '')
@@ -491,7 +486,7 @@ class TestPaddingStrippingReader(unittest.TestCase):
     
     def test_1_byte(self):
         data = 'a'
-        padded_data = 'a\x80' + '\x00' * 14
+        padded_data = 'a' + '\x0f'*15
         reader = PaddingStrippingReader(StringReader(padded_data))
         self.assertEqual(len(reader), 16)
         self.assertEqual(reader.read(100), data)
@@ -499,25 +494,40 @@ class TestPaddingStrippingReader(unittest.TestCase):
     
     def test_7_bytes(self):
         data = '1234567'
-        padded_data = '1234567\x80' + '\x00' * 8
+        padded_data = '1234567' + '\x09'*9
         reader = PaddingStrippingReader(StringReader(padded_data))
         self.assertEqual(len(reader), 16)
         self.assertEqual(reader.read(100), data)
         self.assertEqual(reader.read(1), '')
     
-    def test_7_bytes_not_aligned(self):
+    def test_7_bytes_missing_padding(self):
         data = '1234567'
-        padded_data = '1234567\x80\x00'
+        padded_data = '1234567'
         reader = PaddingStrippingReader(StringReader(padded_data))
-        self.assertEqual(len(reader), 9)
+        self.assertEqual(len(reader), 7)
+        self.assertRaises(DataDamagedException, reader.read, 1)
+    
+    def test_7_bytes_missing_padding_byte(self):
+        data = '1234567'
+        padded_data = '1234567' + '\x09'*8
+        reader = PaddingStrippingReader(StringReader(padded_data))
+        self.assertEqual(len(reader), 15)
+        self.assertRaises(DataDamagedException, reader.read, 1)
+    
+    def test_7_bytes_extra_padding_byte(self):
+        data = '1234567'
+        padded_data = '1234567' + '\x09'*10
+        reader = PaddingStrippingReader(StringReader(padded_data))
+        self.assertEqual(len(reader), 17)
         self.assertEqual(reader.read(1), '1')
         self.assertEqual(reader.read(2), '23')
         self.assertEqual(reader.read(4), '4567')
+        self.assertEqual(reader.read(1), '\x09') # extra padding byte
         self.assertEqual(reader.read(1), '')
     
     def test_15_bytes(self):
         data = '0123456789abcde'
-        padded_data = '0123456789abcde\x80'
+        padded_data = '0123456789abcde\x01'
         reader = PaddingStrippingReader(StringReader(padded_data))
         self.assertEqual(len(reader), 16)
         self.assertEqual(reader.read(100), data)
@@ -525,7 +535,7 @@ class TestPaddingStrippingReader(unittest.TestCase):
     
     def test_16_bytes(self):
         data = '0123456789abcdef'
-        padded_data = '0123456789abcdef\x80' + '\x00' * 15
+        padded_data = '0123456789abcdef' + '\x10'*16
         reader = PaddingStrippingReader(StringReader(padded_data))
         self.assertEqual(len(reader), 32)
         self.assertEqual(reader.read(2), '01')
@@ -534,7 +544,7 @@ class TestPaddingStrippingReader(unittest.TestCase):
     
     def test_17_bytes(self):
         data = '0123456789abcdefx'
-        padded_data = '0123456789abcdefx\x80' + '\x00' * 14
+        padded_data = '0123456789abcdefx' + '\x0f'*15
         reader = PaddingStrippingReader(StringReader(padded_data))
         self.assertEqual(len(reader), 32)
         self.assertEqual(reader.read(2), '01')
@@ -542,8 +552,8 @@ class TestPaddingStrippingReader(unittest.TestCase):
         self.assertEqual(reader.read(1), '')
     
     def test_1mb(self):
-        data = 'a' * 1024*1024
-        padded_data = data +'\x80' + '\x00' * 15
+        data = 'a'*1024*1024
+        padded_data = data + '\x10'*16
         reader = PaddingStrippingReader(StringReader(padded_data))
         self.assertEqual(len(reader), 1024*1024 + 16)
         self.assertEqual(reader.read(1), 'a')
@@ -551,15 +561,31 @@ class TestPaddingStrippingReader(unittest.TestCase):
         self.assertEqual(reader.read(1024*1024), 'a'*1023*1024)
         self.assertEqual(reader.read(1), '')
     
-    def test_17_bytes_minimal_padding(self):
+    def test_17_bytes_bad_padding(self):
         data = '0123456789abcdefx'
-        padded_data = '0123456789abcdefx\x80'
+        padded_data = '0123456789abcdefx\x0e' + '\x0f'*14
         reader = PaddingStrippingReader(StringReader(padded_data))
-        self.assertEqual(len(reader), 18)
+        self.assertEqual(len(reader), 32)
+        self.assertEqual(reader.read(16), '0123456789abcdef')
+        self.assertRaises(DataDamagedException, reader.read, 1)
+    
+    def test_17_bytes_extra_padding_byte(self):
+        data = '0123456789abcdefx'
+        padded_data = '0123456789abcdefx' + '\x0f'*16
+        reader = PaddingStrippingReader(StringReader(padded_data))
+        self.assertEqual(len(reader), 33)
         self.assertEqual(reader.read(2), '01')
-        self.assertEqual(reader.read(100), '23456789abcdefx')
+        self.assertEqual(reader.read(100), '23456789abcdefx\x0f')
         self.assertEqual(reader.read(1), '')
     
+    def test_17_bytes_missing_padding_byte(self):
+        data = '0123456789abcdefx'
+        padded_data = '0123456789abcdefx' + '\x0f'*14
+        reader = PaddingStrippingReader(StringReader(padded_data))
+        self.assertEqual(len(reader), 31)
+        self.assertEqual(reader.read(15), '0123456789abcde')
+        self.assertRaises(DataDamagedException, reader.read, 1)
+
     def test_17_bytes_missing_padding(self):
         data = '0123456789abcdefx'
         padded_data = '0123456789abcdefx'
@@ -568,32 +594,48 @@ class TestPaddingStrippingReader(unittest.TestCase):
         self.assertEqual(reader.read(1), '0')
         self.assertRaises(DataDamagedException, reader.read, 1)
 
+    def test_17_bytes_null_padding_byte(self):
+        data = '0123456789abcdefx'
+        padded_data = '0123456789abcdefx\x00'
+        reader = PaddingStrippingReader(StringReader(padded_data))
+        self.assertEqual(len(reader), 18)
+        self.assertEqual(reader.read(2), '01')
+        self.assertRaises(DataDamagedException, reader.read, 1)
+    
+    def test_17_bytes_padding_bytes_too_large(self):
+        data = '0123456789abcdefx'
+        padded_data = '0123456789abcdefx' + '\x11' * 17
+        reader = PaddingStrippingReader(StringReader(padded_data))
+        self.assertEqual(len(reader), 34)
+        self.assertEqual(reader.read(18), '0123456789abcdefx\x11')
+        self.assertRaises(DataDamagedException, reader.read, 1)
+    
     def test_test_read_all(self):
-        reader = PaddingStrippingReader(StringReader('1234567\x80' + '\x00'*8))
+        reader = PaddingStrippingReader(StringReader('1234567' + '\x09'*9))
         self.assertEqual(reader.read(), '1234567')
         self.assertEqual(reader.read(), '')
-        reader = PaddingStrippingReader(StringReader('1234567\x80' + '\x00'*8))
+        reader = PaddingStrippingReader(StringReader('1234567' + '\x09'*9))
         self.assertEqual(reader.read(2), '12')
         self.assertEqual(reader.read(), '34567')
         self.assertEqual(reader.read(), '')
-        reader = PaddingStrippingReader(StringReader('1234567\x80' + '\x00'*8))
+        reader = PaddingStrippingReader(StringReader('1234567' + '\x09'*9))
         self.assertEqual(reader.read(7), '1234567')
         self.assertEqual(reader.read(), '')
     
     def test_test_read_all_neg(self):
-        reader = PaddingStrippingReader(StringReader('1234567\x80' + '\x00'*8))
+        reader = PaddingStrippingReader(StringReader('1234567' + '\x09'*9))
         self.assertEqual(reader.read(-1), '1234567')
         self.assertEqual(reader.read(-1), '')
-        reader = PaddingStrippingReader(StringReader('1234567\x80' + '\x00'*8))
+        reader = PaddingStrippingReader(StringReader('1234567' + '\x09'*9))
         self.assertEqual(reader.read(2), '12')
         self.assertEqual(reader.read(-1), '34567')
         self.assertEqual(reader.read(-1), '')
-        reader = PaddingStrippingReader(StringReader('1234567\x80' + '\x00'*8))
+        reader = PaddingStrippingReader(StringReader('1234567' + '\x09'*9))
         self.assertEqual(reader.read(7), '1234567')
         self.assertEqual(reader.read(-1), '')
 
     def test_close(self):
-        reader = PaddingStrippingReader(StringReader('1234567\x80' + '\x00'*8))
+        reader = PaddingStrippingReader(StringReader('1234567' + '\x09'*9))
         reader.read()
         reader.close()
         self.assertRaises(Exception, reader.read, 1)
@@ -887,16 +929,26 @@ class TestAesCbcReaders(unittest.TestCase):
     
 
 class TestEncryptingReader(unittest.TestCase):
+    """
+    >>> import Crypto.Cipher.AES, hmac, hashlib
+    >>> ctext = Crypto.Cipher.AES.new('k'*32, Crypto.Cipher.AES.MODE_CBC, 'i'*16).encrypt('\x10'*16)
+    >>> ctext.encode('base64').strip()
+    'XRHEmvGLSz5IJQg2K9LIVw=='
+    >>> h = hmac.new('k'*32, digestmod=hashlib.sha256)
+    >>> h.update('s'*16 + 'i'*16 + ctext)
+    >>> h.digest().encode('base64').strip()
+    '6ALdPKUjd26UD/TK7YB2m3NQ3q/O7WeeVoFZTBxqgWk='
+    """
     def setUp(self):
         self.passphrase = 'passphrase'
         self.salt = 's' * 16
         self.iv = 'i' * 16
         self.key = 'k' * 32
     
-    def test_no_bytes(self):
+    def test_no_data(self):
         data = ''
-        ciphertext = 'XdwcsHWSePqdnGOXLtXopA=='.decode('base64')
-        mac = 'MZH3egS1YJG0I9DrMMFFVi/JvnGCu5ipmGY82vSveoA='.decode('base64')
+        ciphertext = 'XRHEmvGLSz5IJQg2K9LIVw=='.decode('base64')
+        mac = '6ALdPKUjd26UD/TK7YB2m3NQ3q/O7WeeVoFZTBxqgWk='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(len(reader), 16 + (16 + 16 + (0 + 16)) + 32)
@@ -906,8 +958,8 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_1_byte(self):
         data = 'a'
-        ciphertext = 'wmCwhQl9IPU8KvuF1rZhWw=='.decode('base64')
-        mac = 'Dk4tWUE1drYdtZ/6zPJXAxVw58sEuDbAQVrQNx3+rBs='.decode('base64')
+        ciphertext = 'HFZ6/OmBu48IApjdDQ/UWw=='.decode('base64')
+        mac = 'n18/PrkFOUqF0WM87ztSpotVQrlk78NpZ/Pj7Q2hYSU='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(len(reader), 16 + (16 + 16 + (1 + 15)) + 32)
@@ -917,8 +969,8 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_16_bytes(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
-        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
@@ -930,9 +982,9 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_32_bytes(self):
         data = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'
-        ciphertext = 'J5+ATEVX9bnkx4xhMf88LJq4iEwEgIV+Z/AW0h+' \
-            'fA8a5iqiAxgJBqlNiLbTzCib/'.decode('base64')
-        mac = 'Zj4rhjIoI97LWoglO9TUcWHrEIP8yBh3ygzpRRINTWk='.decode('base64')
+        ciphertext = 'J5+ATEVX9bnkx4xhMf88LJq4iEwEgIV+Z/A' \
+            'W0h+fA8ao0ha1erTLad75csQk8pd1'.decode('base64')
+        mac = 'VIIr1tbK5p48XtXKEKuiDo6lzv7/4X0tf1Xx9NQh5Z8='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(len(reader), 16 + (16 + 16 + (32 + 16)) + 32)
@@ -942,9 +994,19 @@ class TestEncryptingReader(unittest.TestCase):
         self.assertEqual(reader.read(1), '')
     
     def test_16_bytes_with_real_key(self):
+        """
+        >>> import chlorocrypt
+        >>> ctext = Crypto.Cipher.AES.new(chlorocrypt.pbkdf2_256bit('passphrase', 's'*16), Crypto.Cipher.AES.MODE_CBC, 'i'*16).encrypt('0123456789abcdef' + '\x10'*16)
+        >>> ctext.encode('base64').strip()
+        '3poinep3R7LRLIfd+uSZf7pyB8gVuccT7PQx220yV9E='
+        >>> h = hmac.new(chlorocrypt.pbkdf2_256bit('passphrase', 's'*16), digestmod=hashlib.sha256)
+        >>> h.update('s'*16 + 'i'*16 + ctext)
+        >>> h.digest().encode('base64').strip()
+        '2J1axhpllhGPzrlgWxTmhxzk88PQFLVFs24xExIK7iY='
+        """
         data = '0123456789abcdef'
-        ciphertext = '3poinep3R7LRLIfd+uSZf47+1N3S97MsxOx97k4rX9c='.decode('base64')
-        mac = 'ImYdegy8QLCggXd9n0YrQY3eeYejMS5SWEPUv3XUOd4='.decode('base64')
+        ciphertext = '3poinep3R7LRLIfd+uSZf7pyB8gVuccT7PQx220yV9E='.decode('base64')
+        mac = '2J1axhpllhGPzrlgWxTmhxzk88PQFLVFs24xExIK7iY='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv)
         self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
@@ -967,8 +1029,8 @@ class TestEncryptingReader(unittest.TestCase):
 
     def test_read_all(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
-        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(reader.read(),
@@ -988,8 +1050,8 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_read_all_neg(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
-        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(reader.read(-1),
@@ -1009,8 +1071,8 @@ class TestEncryptingReader(unittest.TestCase):
     
     def test_rewind(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
-        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         reader = EncryptingReader(StringReader(data), self.passphrase,
                                   self.salt, self.iv, self.key)
         self.assertEqual(len(reader), 16 + (16 + 16 + (16 + 16)) + 32)
@@ -1061,16 +1123,17 @@ class TestDecryptingReader(unittest.TestCase):
                           self.passphrase, self.key)
     
     def test_no_padding(self):
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qhw=='.decode('base64')
-        mac = 'V/LKyFj8MoZ3ZS3WZtG3xqwogrPg8Bn2z0SY/Jp3IGE='.decode('base64')
+        data = '0123456789abcdef'
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vQ=='.decode('base64')
+        mac = 'PuUhlBuJ3KiCZIW38009M13hViu936UvVKRtN+9AS84='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertRaises(DataDamagedException, reader.read, 1)
     
     def test_no_data(self):
         data = ''
-        ciphertext = 'XdwcsHWSePqdnGOXLtXopA=='.decode('base64')
-        mac = 'MZH3egS1YJG0I9DrMMFFVi/JvnGCu5ipmGY82vSveoA='.decode('base64')
+        ciphertext = 'XRHEmvGLSz5IJQg2K9LIVw=='.decode('base64')
+        mac = '6ALdPKUjd26UD/TK7YB2m3NQ3q/O7WeeVoFZTBxqgWk='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 16)
@@ -1078,8 +1141,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_1_byte(self):
         data = 'a'
-        ciphertext = 'wmCwhQl9IPU8KvuF1rZhWw=='.decode('base64')
-        mac = 'Dk4tWUE1drYdtZ/6zPJXAxVw58sEuDbAQVrQNx3+rBs='.decode('base64')
+        ciphertext = 'HFZ6/OmBu48IApjdDQ/UWw=='.decode('base64')
+        mac = 'n18/PrkFOUqF0WM87ztSpotVQrlk78NpZ/Pj7Q2hYSU='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 16)
@@ -1088,8 +1151,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_partial_block(self):
         data = ''
-        ciphertext = 'XdwcsHWSePqdnGOXLtXopA=='.decode('base64') + 'x'
-        mac = 'JkCaQY5QRPkBgk79Jf9w5oFt6IkE9Xql48LUyEpF7fQ='.decode('base64')
+        ciphertext = 'XRHEmvGLSz5IJQg2K9LIVw=='.decode('base64') + 'x'
+        mac = 'MwLWMt+7gPmu9+DPh+LK7AlUITNnnP7v3qFnTNobldA='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 17)
@@ -1097,8 +1160,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_16_bytes(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
-        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 32)
@@ -1108,8 +1171,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_16_bytes_plus_partial_block(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64') + 'x'
-        mac = '/X4tGXAoj9x8hBgyFv/SjD+P4EkF/lJ8SzLIrGm8ucw='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64') + 'x'
+        mac = '0Ku8M3omkV+ijtgw/ARiQIrWJ8D7pY94G1tfYUsUCM4='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 33)
@@ -1119,9 +1182,9 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_32_bytes(self):
         data = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'
-        ciphertext = 'J5+ATEVX9bnkx4xhMf88LJq4iEwEgIV+Z/AW0h+' \
-            'fA8a5iqiAxgJBqlNiLbTzCib/'.decode('base64')
-        mac = 'Zj4rhjIoI97LWoglO9TUcWHrEIP8yBh3ygzpRRINTWk='.decode('base64')
+        ciphertext = 'J5+ATEVX9bnkx4xhMf88LJq4iEwEgIV+Z/A' \
+            'W0h+fA8ao0ha1erTLad75csQk8pd1'.decode('base64')
+        mac = 'VIIr1tbK5p48XtXKEKuiDo6lzv7/4X0tf1Xx9NQh5Z8='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(len(reader), 48)
@@ -1130,8 +1193,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_16_bytes_with_real_key(self):
         data = '0123456789abcdef'
-        ciphertext = '3poinep3R7LRLIfd+uSZf47+1N3S97MsxOx97k4rX9c='.decode('base64')
-        mac = 'ImYdegy8QLCggXd9n0YrQY3eeYejMS5SWEPUv3XUOd4='.decode('base64')
+        ciphertext = '3poinep3R7LRLIfd+uSZf7pyB8gVuccT7PQx220yV9E='.decode('base64')
+        mac = '2J1axhpllhGPzrlgWxTmhxzk88PQFLVFs24xExIK7iY='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase)
         self.assertEqual(len(reader), 32)
@@ -1140,8 +1203,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_read_all(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
-        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(reader.read(), '0123456789abcdef')
@@ -1158,8 +1221,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_read_all_neg(self):
         data = '0123456789abcdef'
-        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vVNG+c5XlOK/yZ3QttnWgpw='.decode('base64')
-        mac = 'ksbanXkR4IN9fqyxvHAFNnROan78ntbNpNju3ATZ8Ys='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         self.assertEqual(reader.read(-1), '0123456789abcdef')
@@ -1184,9 +1247,8 @@ class TestDecryptingReader(unittest.TestCase):
     
     def test_close(self):
         data = '0123456789abcdef'
-        ciphertext = 'GrEi4QMwqyNQX1nODd1Qh9wog/6Gery0z3RWfq' \
-            'Su+u4KasWWZO7euiuS+dllC2OY'.decode('base64')
-        mac = 'yBpRfLybWw8Fuka5ir5e+HlKeckF+L0TuCJpQX6Fk5g='.decode('base64')
+        ciphertext = 'Rx5kzFEEgumDBeMJG3j9vU8soT1Btfzmh7yfnEsaLxk='.decode('base64')
+        mac = 'Uk8EvoIwrXDl09W/xDngXZEHTQ4sa32xEgA9/Jqhg1Q='.decode('base64')
         input = StringReader(self.salt + self.salt + self.iv + ciphertext + mac)
         reader = DecryptingReader(input, self.passphrase, self.key)
         reader.read()

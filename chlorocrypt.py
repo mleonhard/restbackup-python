@@ -14,7 +14,7 @@ http://www.voidspace.org.uk/python/modules.shtml#pycrypto
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.5'
+__version__ = '1.6'
 
 import getpass
 import hmac
@@ -51,8 +51,13 @@ class MacAddingReader(RewindableSizedInputStream):
     using PBKDF2 with 4096 rounds of HMAC-SHA-256.  Inserts 32-byte
     SHA-256 MACs into the stream every 64 KB.  Verify the MACs with
     MacCheckingReader.
+    
+    Production code should not provide values for the
+    testing_only_salt or test_only_key parameters.  These are for
+    testing purposes only.
     """
-    def __init__(self, stream, passphrase, salt=None, key=None):
+    def __init__(self, stream, passphrase,
+                 testing_only_salt=None, testing_only_key=None):
         """Stream must be a RewindableSizedInputStream object.
         Passphrase is a byte stream."""
         num_full_blocks = len(stream) / MAC_BLOCK_SIZE
@@ -62,12 +67,8 @@ class MacAddingReader(RewindableSizedInputStream):
         stream_length = 16 + len(stream) + 32 * num_macs
         RewindableSizedInputStream.__init__(self, stream_length)
         self.stream = stream
-        if not salt:
-            salt = os.urandom(16)
-        self.salt = salt
-        if not key:
-            key = pbkdf2_256bit(passphrase, salt)
-        self.key = key
+        self.salt = testing_only_salt or os.urandom(16)
+        self.key = testing_only_key or pbkdf2_256bit(passphrase, self.salt)
         self.rewind()
     
     def read_once(self, size):
@@ -122,8 +123,11 @@ class MacCheckingReader(SizedInputStream):
     Removes the 16-byte salt prefix and verifies the 32-byte SHA-256
     HMACs which appear in the stream every 64 KB.  Verifies data
     before returning it.  Create such a stream with MacAddingReader.
+    
+    Production code should not provide a value for the
+    testing_only_key parameter.  This is for testing purposes only.
     """
-    def __init__(self, stream, passphrase, key=None):
+    def __init__(self, stream, passphrase, testing_only_key=None):
         """Stream must be a SizedInputStream object.  Passphrase must
         be a byte string."""
         blocks_len = len(stream) - 16
@@ -137,8 +141,7 @@ class MacCheckingReader(SizedInputStream):
         salt = stream.read(16)
         if len(salt) != 16:
             raise DataTruncatedException("File does not contain full MAC salt.")
-        if not key:
-            key = pbkdf2_256bit(passphrase, salt)
+        key = testing_only_key or pbkdf2_256bit(passphrase, salt)
         self.mac = hmac.new(key, digestmod=hashlib.sha256)
         self.buffer = ''
         self.stream_at_start = True
@@ -170,7 +173,13 @@ class MacCheckingReader(SizedInputStream):
         self.buffer = chunk[:-32]
         self.mac.update(self.buffer)
         expected_digest = chunk[-32:]
-        if self.mac.digest() != expected_digest:
+        calculated_digest = self.mac.digest()
+        # Avoid timing attacks when comparing MAC
+        # http://seb.dbzteam.org/crypto/python-oauth-timing-hmac.pdf
+        diff = 0
+        for n in xrange(32):
+            diff |= ord(expected_digest[n]) ^ ord(calculated_digest[n])
+        if diff != 0:
             raise BadMacException("The passphrase is incorrect or the file is damaged.")
         return self.read_once(size)
     
@@ -186,10 +195,13 @@ class PaddingAddingReader(RewindableSizedInputStream):
     bytes."""
     def __init__(self, stream):
         """Stream must be a RewindableSizedInputStream."""
-        data_bytes = len(stream)
-        # Pad with 0x80 and enough nulls to fill last block
-        self.padding = '\x80' + '\x00' * (15 - data_bytes % 16)
-        stream_length = data_bytes + len(self.padding)
+        # Always add padding to make sure that last block has 16
+        # bytes.  Use the PKCS#5 format: '\x01', '\x02\x02',
+        # '\x03\x03\x03', etc.  See section 6.3 of
+        # http://www.ietf.org/rfc/rfc3852.txt
+        padding_bytes_needed = 16 - len(stream) % 16 or 16
+        self.padding = chr(padding_bytes_needed) * padding_bytes_needed
+        stream_length = len(stream) + len(self.padding)
         assert(stream_length % 16 == 0)
         RewindableSizedInputStream.__init__(self, stream_length)
         self.stream = stream
@@ -231,6 +243,12 @@ class PaddingStrippingReader(SizedInputStream):
     
     Raises DataDamagedException if no padding is found at end of
     stream.
+    
+    Be sure to use MacCheckingReader to authenticate your data before
+    decrypting and checking padding.  When used with
+    AesCbcDecryptingReader alone, this class can make your software
+    vulnerable to a padding oracle attack.  When in doubt, just use
+    DecryptingReader.
     """
     def __init__(self, stream):
         """Stream must be a SizedInputStream."""
@@ -259,19 +277,18 @@ class PaddingStrippingReader(SizedInputStream):
             else: # EOF
                 self.stream = None
                 self.buffer = self.buffer + chunk
-                # strip padding
-                n = len(self.buffer) - 1
-                padding_bytes = 0
-                while padding_bytes < 16 and n > 0 and self.buffer[n] == '\x00':
-                    n -= 1
-                    padding_bytes += 1
-                if padding_bytes <= 16 and n >= 0 and self.buffer[n] == '\x80':
-                    self.buffer = self.buffer[:n]
-                    return self.read_once(size)
-                else:
-                    raise DataDamagedException("Did not find padding at end of "
-                                               "file.  Passphrase is incorrect "
-                                               "or file is damaged.")
+                # strip padding, leaks timing info for Padding Oracle
+                # attacks
+                if len(self.buffer) < 1:
+                    raise DataDamagedException("Did not find valid padding at end of file")
+                num_bytes = ord(self.buffer[-1])
+                if num_bytes > 16 or len(self.buffer) < num_bytes:
+                    raise DataDamagedException("Did not find valid padding at end of file")
+                padding_bytes = self.buffer[-num_bytes:]
+                if not all([ord(byte) == num_bytes for byte in padding_bytes]):
+                    raise DataDamagedException("Did not find valid padding at end of file")
+                self.buffer = self.buffer[:-num_bytes]
+                return self.read_once(size)
         if self.buffer:
             chunk = self.buffer[:size]
             self.buffer = self.buffer[size:]
@@ -295,8 +312,13 @@ class AesCbcEncryptingReader(RewindableSizedInputStream):
     Raises ValueError if input stream does not end on a 16-byte block
     boundary.  Use PaddingAddingReader to ensure stream ends on a
     16-byte block boundary.
+    
+    Production code should not provide values for the
+    testing_only_salt, testing_only_iv, or test_only_key parameters.
+    These are for testing purposes only.
     """
-    def __init__(self, stream, passphrase, salt=None, iv=None, key=None):
+    def __init__(self, stream, passphrase, 
+                 testing_only_salt=None, testing_only_iv=None, testing_only_key=None):
         """Stream must be a RewindableSizedInputStream.  Passphrase
         must be a byte string."""
         if len(stream) % 16:
@@ -305,19 +327,13 @@ class AesCbcEncryptingReader(RewindableSizedInputStream):
         RewindableSizedInputStream.__init__(self, stream_length)
         self.stream = stream
         self.stream_keep = stream
-        if not salt:
-            salt = os.urandom(16)
-        if not iv:
-            # For a discussion of CBC mode and how to choose IVs, see
-            # NIST Special Publication 800-38A, 2001 Edition
-            # Recommendation for Block Cipher Modes of Operation
-            # http://csrc.nist.gov/publications/nistpubs/800-38a/sp800-38a.pdf
-            iv = os.urandom(16)
-        if not key:
-            key = pbkdf2_256bit(passphrase, salt)
-        self.salt = salt
-        self.iv = iv
-        self.key = key
+        self.salt = testing_only_salt or os.urandom(16)
+        # For a discussion of CBC mode and how to choose IVs, see
+        # NIST Special Publication 800-38A, 2001 Edition
+        # Recommendation for Block Cipher Modes of Operation
+        # http://csrc.nist.gov/publications/nistpubs/800-38a/sp800-38a.pdf
+        self.iv = testing_only_iv or os.urandom(16)
+        self.key = testing_only_key or pbkdf2_256bit(passphrase, self.salt)
         self.rewind()
     
     def read_once(self, size):
@@ -362,8 +378,11 @@ class AesCbcDecryptingReader(SizedInputStream):
     of HMAC-SHA-256.  Decrypts the stream using AES in CBC mode.
     Raises DataTruncatedException if file is too short to contain
     expected header or the file ends in the middle of a block.
+    
+    Production code should not provide a value for the
+    testing_only_key parameter.  This is for testing purposes only.
     """
-    def __init__(self, stream, passphrase, key=None):
+    def __init__(self, stream, passphrase, testing_only_key=None):
         """Stream must be a SizedInputStream.  Passphrase must be a
         byte string."""
         if len(stream) < 32:
@@ -377,8 +396,7 @@ class AesCbcDecryptingReader(SizedInputStream):
             raise DataTruncatedException("Unable to read header")
         salt = header[:16]
         iv = header[16:]
-        if not key:
-            key = pbkdf2_256bit(passphrase, salt)
+        key = testing_only_key or pbkdf2_256bit(passphrase, salt)
         self.aes = AES.new(key, AES.MODE_CBC, iv)
         self.buffer = ''
     
@@ -416,11 +434,16 @@ class EncryptingReader(RewindableSizedInputStream):
     This is a convenience class that transforms the plaintext into
     ciphertext using a pipeline of PaddingAddingReader,
     AesCbcEncryptingReader, and MacAddingReader.
+    
+    Production code should not provide values for the
+    testing_only_salt, testing_only_iv, or test_only_key parameters.
+    These are for testing purposes only.
     """
-    def __init__(self, stream, passphrase, salt=None, iv=None, key=None):
+    def __init__(self, stream, passphrase,
+                 testing_only_salt=None, testing_only_iv=None, testing_only_key=None):
         s1 = PaddingAddingReader(stream)
-        s2 = AesCbcEncryptingReader(s1, passphrase, salt, iv, key)
-        s3 = MacAddingReader(s2, passphrase, salt, key)
+        s2 = AesCbcEncryptingReader(s1, passphrase, testing_only_salt, testing_only_iv, testing_only_key)
+        s3 = MacAddingReader(s2, passphrase, testing_only_salt, testing_only_key)
         RewindableSizedInputStream.__init__(self, len(s3))
         self.stream = s3
     
@@ -443,10 +466,13 @@ class DecryptingReader(SizedInputStream):
     AesCbcDecryptingReader, and PaddingStrippingReader.  Due to
     padding, the stream may yield up to 16 bytes less than the value
     of len(stream).
+    
+    Production code should not provide a value for the
+    testing_only_key parameter.  This is for testing purposes only.
     """
-    def __init__(self, stream, passphrase, key=None):
-        s1 = MacCheckingReader(stream, passphrase, key)
-        s2 = AesCbcDecryptingReader(s1, passphrase, key)
+    def __init__(self, stream, passphrase, testing_only_key=None):
+        s1 = MacCheckingReader(stream, passphrase, testing_only_key)
+        s2 = AesCbcDecryptingReader(s1, passphrase, testing_only_key)
         s3 = PaddingStrippingReader(s2)
         SizedInputStream.__init__(self, len(s3))
         self.stream = s3
@@ -507,7 +533,7 @@ def main(args):
         finally:
             outfile.close()
     else:
-        print "AES CBC-mode encryption tool with HMAC-SHA256-PBKDF2"
+        print "AES CBC-mode encryption tool with HMAC-SHA256-PBKDF2, v" + __version__
         print "Usage: chlorocrypt -e|-d [INFILE [OUTFILE [PASSPHRASEFILE]]]"
         return 1
 
