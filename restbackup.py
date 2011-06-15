@@ -120,7 +120,7 @@ class HttpCaller:
             
             time.sleep(retry_delay_seconds)
             retry_delay_seconds *= 2 # exponential backoff
-            if hasattr(body, read):
+            if hasattr(body, "read"):
                 body.rewind()
         
         # raise last 5xx
@@ -278,8 +278,8 @@ class BackupApiCaller(HttpCaller):
         bytes less than the value of len(stream).
         """
         import chlorocrypt
-        extra_headers = { 'User-Agent' : \
-                              HTTP_USER_AGENT + ' chlorocrypt/' + chlorocrypt.__version__ }
+        extra_headers = { 'User-Agent':'%s chlorocrypt/%s' %
+                          (HTTP_USER_AGENT, chlorocrypt.__version__) }
         http_response = self.call('GET', name, extra_headers=extra_headers)
         http_reader = HttpResponseReader(http_response)
         decrypted = chlorocrypt.DecryptingReader(http_reader, passphrase)

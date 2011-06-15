@@ -14,7 +14,7 @@ http://www.voidspace.org.uk/python/modules.shtml#pycrypto
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.6'
+__version__ = '1.7'
 
 import getpass
 import hmac
@@ -516,7 +516,7 @@ def main(args):
         if passphrasefilename == '-':
             passphrase = sys.stdin.readline().rstrip('\r\n')
         elif passphrasefilename:
-            passphrase = open(passphrasefilename, 'rb').read()
+            passphrase = open(passphrasefilename, 'rb').read().strip()
         else:
             passphrase = getpass.getpass('Passphrase: ')
         infile_reader = FileObjectReader(sys.stdin, 1024)
@@ -540,7 +540,7 @@ def main(args):
 def encrypt(passphrase, infile_reader, outfile):
     encrypted = EncryptingReader(infile_reader, passphrase)
     while True:
-        chunk = encrypted.read(1024)
+        chunk = encrypted.read(65536)
         if not chunk:
             break
         outfile.write(chunk)
@@ -549,7 +549,7 @@ def encrypt(passphrase, infile_reader, outfile):
 def decrypt(passphrase, infile_reader, outfile):
     decrypted = DecryptingReader(infile_reader, passphrase)
     while True:
-        chunk = decrypted.read(1024)
+        chunk = decrypted.read(65536)
         if not chunk:
             break
         outfile.write(chunk)
