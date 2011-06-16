@@ -25,7 +25,7 @@ backup_api.put_encrypted('passphrase', '/encrypted-file', reader)
 reader = backup_api.get_encrypted('passphrase', '/encrypted-file')
 local_file = open('downloaded-and-decrypted-file', 'wb')
 while True:
-    chunk = reader.read(1024)
+    chunk = reader.read(65536)
     if not chunk:
         break
     local_file.write(chunk)

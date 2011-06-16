@@ -224,5 +224,8 @@ def list_backup_accounts(access_url):
         print account_id, retain_uploads_days, description
     return 0
 
+def entry_point():
+    sys.exit(main(sys.argv[1:]))
+
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))
