@@ -14,6 +14,23 @@ RestBackup(tm) and restoring from any point in time
 1. Chlorocrypt module and command-line tool for performing
 industry-standard encryption of your backups
 
+Installation
+============
+
+Unix & Mac:
+
+1. Install the python-setuptools and libgmp3-dev packages
+1. Download the restbackup_python egg file and install it with
+    
+        easy_install -f . restbackup_python-1.2-py2.7.egg
+
+Windows:
+
+1. Install [PyCrypto for Windows](http://www.voidspace.org.uk/python/modules.shtml#pycrypto)
+1. Download the restbackup-python EXE or MSI and install it
+1. Add C:\Python27\Scripts\ to your PATH
+
+
 Client Library
 ==============
 
@@ -51,7 +68,9 @@ Example usage:
 Restbackup-CLI
 ==============
 
-The restbackup-cli program lets you interact with the Backup and Management APIs from the command line.  It can also encrypt your backup archives using the Chlorocrypt library.
+The restbackup-cli program lets you interact with the Backup and
+Management APIs from the command line.  It can also encrypt your
+backup archives using the Chlorocrypt library.
 
 CLI Help:
 
@@ -92,7 +111,8 @@ Restbackup-tar Incremental Backup Tool
 
 Restbackup-tar is a command-line tool for performing incremental
 encrypted backups to RestBackup(tm) and restoring from any point in
-time.  Encryption is performed by the Chlorocrypt library.
+time.  Encryption is performed by the Chlorocrypt library.  For unix
+and Mac only.
 
     Usage: restbackup-tar [OPTIONS] COMMAND [args]
     
