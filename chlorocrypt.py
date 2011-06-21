@@ -555,5 +555,8 @@ def decrypt(passphrase, infile_reader, outfile):
         outfile.write(chunk)
     return 0
 
+def entry_point():
+    sys.exit(main(sys.argv[1:]))
+
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))

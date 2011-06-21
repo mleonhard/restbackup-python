@@ -9,7 +9,7 @@ import sys
 
 import restbackup
 
-USAGE="""%prog [OPTIONS] COMMAND [args]
+USAGE="""restbackup-cli [OPTIONS] COMMAND [args]
 
 Backup API Commands:
   put LOCAL_FILE [REMOTE_FILE]   Upload LOCAL_FILE and store as REMOTE_FILE
