@@ -16,9 +16,9 @@ import threading
 import restbackup
 import restbackupcli
 
-DESCRIPTION="""Restbackup-tar is a command-line tool for performing incremental backups to
-RestBackup(tm) and restoring from any point in time.  Get your backup account
-at http://www.restbackup.com/
+DESCRIPTION="""Restbackup-tar is a command-line tool for performing incremental encrypted
+backups to RestBackup(tm) and restoring from any point in time. Get your backup
+account at http://www.restbackup.com/
 
 Encryption is performed by the Chlorocrypt library.  It provides confidentiality
 with AES in CBC mode with a random IV.  Keys are derived with PBKDF2 using
@@ -52,8 +52,7 @@ Options:
                      Generate one with "restbackup-cli make-random-passphrase"
 """
 
-EXAMPLES="""
-Restbackup-tar Example Usage
+EXAMPLE="""Restbackup-tar Example Usage
 
 Setup:
  $ echo https://WPJXX3:INzIsdEE77vZgih7@us.restbackup.com/ >~/.restbackup-backup-api-access-url
