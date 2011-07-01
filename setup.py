@@ -20,7 +20,7 @@ setup(
             ],
         'gui_scripts': []
     },
-    install_requires = ['pycrypto>=2.1.0'],
+    install_requires = ['pycrypto>=2.0.0'],
     zip_safe = False,
     classifiers = [
         'Development Status :: 4 - Beta',
