@@ -19,10 +19,15 @@ Installation
 
 Unix & Mac:
 
-1. Install the python-setuptools and libgmp3-dev packages
-1. Download the restbackup_python egg file and install it with
+1. Install the python-setuptools and python-crypto packages
+1. Download the tar.gz file, extract it, and install with
     
-        easy_install -f . restbackup_python-1.2-py2.7.egg
+        sudo python setup.py install --single-version-externally-managed --root=/
+
+1. Test the restbackup and chlorocrypt libraries
+    
+        python -m test-restbackup
+        python -m test-chlorocrypt
 
 Windows:
 
