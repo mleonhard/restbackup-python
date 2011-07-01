@@ -495,19 +495,15 @@ def pbkdf2_256bit(passphrase, salt, rounds=4096):
     passphrase_bytes = passphrase.encode('utf-8')
     prf = lambda p, data: hmac.new(p, data, digestmod=hashlib.sha256).digest()
     block = prf(passphrase_bytes, salt + '\x00\x00\x00\x01')
-    (a,b,c,d,e,f,g,h) = struct.unpack('LLLLLLLL', block)
+    (a,b,c,d) = struct.unpack('!QQQQ', block)
     for x in xrange(1, rounds):
         block = prf(passphrase_bytes, block)
-        (i,j,k,l,m,n,o,p) = struct.unpack('LLLLLLLL', block)
+        (i,j,k,l) = struct.unpack('!QQQQ', block)
         a = a^i
         b = b^j
         c = c^k
         d = d^l
-        e = e^m
-        f = f^n
-        g = g^o
-        h = h^p
-    return struct.pack('LLLLLLLL', a, b, c, d, e, f, g, h)
+    return struct.pack('!QQQQ', a, b, c, d)
 
 def main(args):
     args.extend([None,None,None,None])
