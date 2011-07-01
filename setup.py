@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 setup(
     name='restbackup-python',
-    version='1.4',
+    version='1.5',
     packages = find_packages(),
     description = 'RestBackup(tm) Client Library and Command Line Interface',
     url = 'https://github.com/mleonhard/restbackup-python',
