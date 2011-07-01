@@ -14,7 +14,7 @@ http://www.voidspace.org.uk/python/modules.shtml#pycrypto
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.7'
+__version__ = '1.8'
 
 import getpass
 import hmac

@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 setup(
     name='restbackup-python',
-    version='1.3',
+    version='1.4',
     packages = find_packages(),
     description = 'RestBackup(tm) Client Library and Command Line Interface',
     url = 'https://github.com/mleonhard/restbackup-python',
@@ -11,7 +11,7 @@ setup(
     license = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms',
     platforms = 'any',
     py_modules=['pyaes', 'chlorocrypt', 'restbackup', 'restbackupcli',
-                'restbackuptar'],
+                'restbackuptar', 'test-restbackup', 'test-chlorocrypt'],
     entry_points = {
         'console_scripts': [
             'chlorocrypt = chlorocrypt:entry_point',
