@@ -33,7 +33,7 @@ Windows:
 
 1. Install [Python 2.7](http://www.python.org/download/)
 1. Install [PyCrypto for Windows](http://www.voidspace.org.uk/python/modules.shtml#pycrypto)
-1. Install restbackup-python EXE or MSI from [Downloads](downloads/)
+1. Install restbackup-python EXE or MSI from [Downloads](restbackup-python/downloads)
 1. Add C:\Python27\Scripts\ to your PATH
 
 
