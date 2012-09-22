@@ -18,6 +18,7 @@ Installation
 
 Unix & Mac:
 
+1. Install Python 2.7
 1. Install the python-setuptools and python-crypto packages
 1. Download the tar.gz file, extract it, and install with
     
@@ -30,8 +31,9 @@ Unix & Mac:
 
 Windows:
 
+1. Install [Python 2.7](http://www.python.org/download/)
 1. Install [PyCrypto for Windows](http://www.voidspace.org.uk/python/modules.shtml#pycrypto)
-1. Download the restbackup-python EXE or MSI and install it
+1. Install restbackup-python EXE or MSI from [Downloads](downloads/)
 1. Add C:\Python27\Scripts\ to your PATH
 
 
