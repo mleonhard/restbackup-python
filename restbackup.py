@@ -3,37 +3,57 @@
 RestBackup(tm) Client Library
 
 This module provides convenient classes for making calls to the
-RestBackup(tm) Backup and Management APIs.  These APIs are documented
-at http://dev.restbackup.com/developers
+RestBackup(tm) Backup API.  The API is documented
+at http://www.restbackup.com/api
 
 Example usage:
 
 import restbackup
-man_api_access_url = 'https://HF7X7S:7IQ5d11Mxw7xxQEW@us.restbackup.com/'
-man_api = restbackup.ManagementApiCaller(man_api_access_url)
-backup_api = man_api.create_backup_account('My Backup Account')
+access_url = 'https://9WQ:By7brh@us.restbackup.com/'
+backup_api = restbackup.BackupApiCaller(access_url, user_agent="Demo/1.0")
 
+# Backup a string
 backup_api.put(name='/data-20110211', data='a string with data')
+
+# Retrieve the backup
 print backup_api.get(name='/data-20110211').read()
-for (name,size,date,createtime,deletetime) in backup_api.list():
-    print name, size, date
 
-backup_api = restbackup.BackupApiCaller('https://9WQ:By7brh@us.restbackup.com/')
-reader = restbackup.FileReader('file-to-encrypt-and-upload')
-backup_api.put_encrypted('passphrase', '/encrypted-file', reader)
+# List backups
+for (name,size,createtime) in backup_api.list():
+    print name, size, createtime
 
-reader = backup_api.get_encrypted('passphrase', '/encrypted-file')
-local_file = open('downloaded-and-decrypted-file', 'wb')
+# Backup a file
+reader = restbackup.FileReader('data-20110211.zip')
+backup_api.put('/data-20110211.zip', reader)
+
+# Restore the file
+reader = backup_api.get('/data-20110211.zip')
+local_file = open('restored.data-20110211.zip', 'wb')
 while True:
     chunk = reader.read(65536)
     if not chunk:
         break
     local_file.write(chunk)
+local_file.close()
+
+# Encrypt and Backup a file
+reader = restbackup.FileReader('data-20110211.zip')
+backup_api.put_encrypted('passphrase', '/data-20110211.zip.encrypted', reader)
+
+# Restore and decrypt the file
+reader = backup_api.get_encrypted('passphrase', '/data-20110211.zip.encrypted')
+local_file = open('restored.decrypted.data-20110211.zip', 'wb')
+while True:
+    chunk = reader.read(65536)
+    if not chunk:
+        break
+    local_file.write(chunk)
+local_file.close()
 """
 
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.3'
+__version__ = '1.4'
 
 import httplib
 import json
@@ -45,44 +65,50 @@ import urllib
 
 MAX_ATTEMPTS = 5
 FIRST_RETRY_DELAY_SECONDS = 1
-NEW_ACCOUNT_DELAY_SECONDS = 5
-
-def make_http_user_agent_string():
-    module_version = "restbackup-python/%s" % (__version__)
-    (major,minor,micro) = sys.version_info[0:3]
-    python_version = "Python/%s.%s.%s" % (major,minor,micro)
-    os_version = sys.platform # build-time value: win32, linux2, darwin, etc.
-    return "%s %s %s" % (module_version, python_version, os_version)
-
-HTTP_USER_AGENT = make_http_user_agent_string()
 
 class RestBackupException(IOError): pass
+class RestBackup401NotAuthorizedException(RestBackupException): pass
+class RestBackup404NotFoundException(RestBackupException): pass
+class RestBackup405MethodNotAllowed(RestBackupException): pass
+
+ACCESS_URL_REGEX = r'^(https?)://([a-zA-Z0-9]+):([a-zA-Z0-9]+)@([-.a-zA-Z0-9]+(?::[0-9]+)?)/$'
+
+def parse_access_url(access_url):
+    match_obj = re.match(ACCESS_URL_REGEX, access_url)
+    if not match_obj:
+        raise ValueError("Invalid access url %r" % (access_url))
+    return match_obj
 
 class HttpCaller:
     """Base class that performs HTTP requests to RestBackup(tm)
     access-urls with authentication
     
-    Use BackupApiCaller and ManagementApiCaller classes instead of this class.
+    Use BackupApiCaller instead of this class.
     """
     
-    def __init__(self, access_url):
+    def __init__(self, access_url, user_agent):
         """Access_url must be a url of the form
         'https://USER:PASS@host/'.  Raises ValueError if access url is
         malformed."""
-        ACCESS_URL_REGEX = r'^(https?)://([a-zA-Z0-9]+):([a-zA-Z0-9]+)' \
-            r'@([-.a-zA-Z0-9]+(?::[0-9]+)?)/$'
-        match_obj = re.match(ACCESS_URL_REGEX, access_url)
-        if not match_obj:
-            raise ValueError("Invalid access url %r" % (access_url))
+        match_obj = parse_access_url(access_url)
         (scheme, username, password, host) = match_obj.groups()
         self.access_url = access_url
         self.scheme = scheme
         self.host = host
-        encoded_userpass = (username + ":" + password).encode('base64').strip()
-        self.precomputed_headers = {
-            'Authorization' : "Basic " + encoded_userpass,
-            'User-Agent' : HTTP_USER_AGENT
-            }
+        self.precomputed_headers = {}
+        self.set_user_pass(username, password)
+        
+        module_version = "restbackup-python/%s" % (__version__)
+        python_version = "Python/%s.%s.%s" % \
+            (sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
+        os_version = sys.platform # "win32", "linux2", "darwin", etc.
+        full_user_agent = "%s %s %s %s" % \
+            (user_agent, module_version, python_version, os_version)
+        self.precomputed_headers['User-Agent'] = full_user_agent
+    
+    def set_user_pass(self, username, password):
+        encoded_userpass = (username + ":" + password).encode('base64').strip().replace('\n','')
+        self.precomputed_headers['Authorization'] = "Basic " + encoded_userpass
     
     def get_http_connection(self):
         if self.scheme == 'http':
@@ -100,20 +126,31 @@ class HttpCaller:
         # HTTP PUT from Python explained in:
         # http://infomesh.net/2001/QuickPut/QuickPut.txt
         encoded_uri = uri.encode('utf-8')
+        quoted_uri = urllib.quote(encoded_uri)
         headers = self.precomputed_headers.copy()
         headers.update(extra_headers)
         retry_delay_seconds = FIRST_RETRY_DELAY_SECONDS
         for attempt in xrange(0, MAX_ATTEMPTS):
             try:
                 h = self.get_http_connection()
-                h.request(method, encoded_uri, body, headers)
+                h.request(method, quoted_uri, body, headers)
                 response = h.getresponse()
             except Exception, e:
-                raise RestBackupException(e)
+                (e_type, e_value, e_traceback) = sys.exc_info()
+                raise RestBackupException(e), None, e_traceback
             if response.status >= 200 and response.status < 300:
                 return response # 2xx success
             elif response.status >= 500 and response.status < 600:
                 pass # 5xx retry
+            elif response.status == 401:
+                description = "%s %s" % (response.status, response.reason)
+                raise RestBackup401NotAuthorizedException(description)
+            elif response.status == 405:
+                description = "%s %s" % (response.status, response.reason)
+                raise RestBackup405MethodNotAllowed(description)
+            elif response.status == 404:
+                description = "%s %s" % (response.status, response.reason)
+                raise RestBackup404NotFoundException(description)
             else: # 4xx fail
                 description = "%s %s" % (response.status, response.reason)
                 raise RestBackupException(description)
@@ -138,75 +175,6 @@ class HttpCaller:
         return self.call('POST', uri, body, extra_header)
 
 
-class ManagementApiCaller(HttpCaller):
-    """Interface class for the RestBackup(tm) Management API
-    
-    Instantiate like this:
-    
-    man_api_access_url = 'https://HF7X7S:7I1xxQEW@us.restbackup.com/'
-    man_api = restbackup.ManagementApiCaller(man_api_access_url)
-    """
-    
-    def create_backup_account(self, description, retain_uploads_days=365,
-                              delay_seconds=NEW_ACCOUNT_DELAY_SECONDS):
-        """Adds a backup account, returns a BackupApiCaller object
-        
-        Raises RestBackupException on error.  You can obtain the new
-        backup account details from the returned object:
-
-        b = man_api.create_backup_account('Account for customer 8734')
-        print b.access_url, b.description, b.retain_uploads_days, \
-        b.account_id
-        """
-        params = {'description':description, 'retaindays':retain_uploads_days}
-        response = self.post('/', params)
-        response_body = response.read()
-        obj = json.loads(response_body)
-        time.sleep(delay_seconds)
-        return BackupApiCaller(obj['access-url'], obj['retaindays'],
-                               obj['description'], obj['account'])
-    
-    def get_backup_account(self, account_id):
-        """Looks up the backup account with the specified account id,
-        returns a BackupApiCaller object
-        
-        Raises RestBackupException on error.  You can obtain the
-        backup account details from the returned object:
-        
-        b = man_api.get_backup_account('/17163a5-233f-9098-bac142601')
-        print b.access_url, b.description, b.retain_uploads_days, \
-        b.account_id
-        """
-        response = self.call('GET', account_id)
-        response_body = response.read()
-        obj = json.loads(response_body)
-        return BackupApiCaller(obj['access-url'], obj['retaindays'], 
-                               obj['description'], obj['account'])
-    
-    def delete_backup_account(self, account_id):
-        """Deletes the backup account with the specified account id.
-        Returns a string containing the response body.  Raises
-        RestBackupException on error."""
-        response = self.call('DELETE', account_id)
-        return response.read()
-    
-    def list_backup_accounts(self):
-        """Downloads the list of backup accounts.  Returns a list
-        3-tuples: (account_id, retain_uploads_days, description).
-        Raises RestBackupException on error."""
-        response = self.call('GET', '/')
-        response_body = response.read()
-        array = json.loads(response_body)
-        return [(obj['account'],obj['retaindays'],obj['description'])
-                for obj in array]
-    
-    def __str__(self):
-        return "management api %r" % (self.access_url)
-    
-    def __repr__(self):
-        return "ManagementApiCaller(access_url=%r)" % (self.access_url)
-
-
 class BackupApiCaller(HttpCaller):
     """Interface class for the RestBackup(tm) Management API
     
@@ -214,15 +182,10 @@ class BackupApiCaller(HttpCaller):
     access_url = 'https://JCC597:QCrr3yYSApik0fKP@us.restbackup.com/'
     backup_api = restbackup.BackupApiCaller(access_url)
     """
-    def __init__(self, access_url, retain_uploads_days=None, description=None,
-                 account_id=None):
+    def __init__(self, access_url, user_agent):
         """Access_url must have the form 'https://USER:PASS@host/'.
         Raises ValueError if access url is malformed."""
-        self.access_url = access_url
-        self.retain_uploads_days = retain_uploads_days
-        self.description = description
-        self.account_id = account_id
-        HttpCaller.__init__(self, access_url)
+        HttpCaller.__init__(self, access_url, user_agent)
     
     def put(self, name, data):
         """Uploads the provided data to the backup account, storing it
@@ -242,17 +205,18 @@ class BackupApiCaller(HttpCaller):
         string containing the response body.
         
         Uses AES for confidentiality, SHA-256 HMAC for authentication,
-        and PBKDF2 with 1000 rounds of HMAC-SHA-256 for key
+        and PBKDF2 with 4096 rounds of HMAC-SHA-256 for key
         generation.  Raises RestBackupException on error.
         """
         import chlorocrypt
         if not hasattr(data, 'read'):
             data = StringReader(data)
         encrypted = chlorocrypt.EncryptingReader(data, passphrase)
+        crypto_ver = 'chlorocrypt/' + chlorocrypt.__version__
+        user_agent = self.precomputed_headers['User-Agent'] + ' ' + crypto_ver
         extra_headers = {
             'Content-Length':str(len(encrypted)),
-            'User-Agent' : HTTP_USER_AGENT + ' chlorocrypt/' + \
-                chlorocrypt.__version__
+            'User-Agent' : user_agent
             }
         response = self.call('PUT', name, encrypted, extra_headers)
         return response.read()
@@ -278,8 +242,9 @@ class BackupApiCaller(HttpCaller):
         bytes less than the value of len(stream).
         """
         import chlorocrypt
-        extra_headers = { 'User-Agent':'%s chlorocrypt/%s' %
-                          (HTTP_USER_AGENT, chlorocrypt.__version__) }
+        crypto_ver = 'chlorocrypt/' + chlorocrypt.__version__
+        user_agent = self.precomputed_headers['User-Agent'] + ' ' + crypto_ver
+        extra_headers = { 'User-Agent' : user_agent }
         http_response = self.call('GET', name, extra_headers=extra_headers)
         http_reader = HttpResponseReader(http_response)
         decrypted = chlorocrypt.DecryptingReader(http_reader, passphrase)
@@ -287,24 +252,21 @@ class BackupApiCaller(HttpCaller):
     
     def list(self):
         """Lists the files available on the backup account.  Returns a
-        list of tuples: (name,size,date,createtime,deletetime).
+        list of tuples: (name,size,createtime).
+        
         Raises DataDamagedException
         """
         extra_headers = {'Accept':'application/json'}
         response = self.call('GET', '/', extra_headers=extra_headers)
         response_body = response.read()
         array = json.loads(response_body)
-        return [(obj['name'],obj['size'],obj['date'],obj['createtime'],
-                 obj['deletetime']) for obj in array]
+        return [(obj['name'],obj['size'],obj['createtime']) for obj in array]
     
     def __str__(self):
         return "backup api %r" % (self.access_url)
     
     def __repr__(self):
-        return "BackupApiCaller(access_url=%r,retain_uploads_days=%r," \
-            "description=%r,account_id=%r)" \
-            % (self.access_url,self.retain_uploads_days,
-               self.description,self.account_id)
+        return "BackupApiCaller(access_url=%r)" % (self.access_url)
 
 
 class InputStream(object):

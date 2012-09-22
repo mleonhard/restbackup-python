@@ -1,29 +1,24 @@
 #!/usr/bin/env python
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.0'
+__version__ = '1.1'
 
 import optparse
 import os.path
 import sys
+import time
 
 import restbackup
 
 USAGE="""restbackup-cli [OPTIONS] COMMAND [args]
 
-Backup API Commands:
+Commands:
   put LOCAL_FILE [REMOTE_FILE]   Upload LOCAL_FILE and store as REMOTE_FILE
   get REMOTE_FILE [LOCAL_FILE]   Download REMOTE_FILE and save as LOCAL_FILE
   list                           List uploaded files
   encrypt-and-put LOCAL [REMOTE] Encrypt LOCAL file and upload as REMOTE
   get-and-decrypt REMOTE [LOCAL] Download REMOTE, decrypt, and save as LOCAL
-  make-random-passphrase         Generate a random 35-bit passphrase
-
-Management API Commands:
-  create-backup-account DESCRIPTION RETAIN_UPLOADS_DAYS
-  get-backup-account ACCOUNT_ID
-  delete-backup-account ACCOUNT_ID
-  list-backup-accounts"""
+  make-random-passphrase         Generate a random 35-bit passphrase"""
 
 EXAMPLES="""
 Encryption is performed by the Chlorocrypt library.  Uses AES in CBC mode for
@@ -31,27 +26,34 @@ confidentiality.  Derives keys from passphrase using 128-bit salt and PBKDF2
 with 4096 rounds of HMAC-SHA-256.  Uses PKCS#5 padding.  Verifies file
 integrity with SHA-256 HMACs.
 
+For faster operation, install the PyCrypto library:
+http://www.dlitz.net/software/pycrypto/
+http://www.voidspace.org.uk/python/modules.shtml#pycrypto
+
 Examples:
-  %(prog)s put backup-20110615.tar.gz
-  %(prog)s get /backup-20110615.tar.gz ~/restored/backup-20110615.tar.gz"""
+  %(prog)s put data-20110615.tar.gz
+  %(prog)s get /data-20110615.tar.gz ~/restored/data-20110615.tar.gz
+  %(prog)s list
+  
+  %(prog)s make-random-passphrase >~/.restbackup-file-encryption-passphrase
+  cat ~/.restbackup-file-encryption-passphrase
+  (Write down the passphrase and keep a copy off-site!)
+  %(prog)s encrypt-and-put data-20110615.tgz
+  %(prog)s get-and-decrypt /data-20110615.tgz ~/restored-data-20110615.tgz"""
 
 DEFAULT_BACKUP_URL_FILE=os.path.join("~", ".restbackup-backup-api-access-url")
-DEFAULT_MAN_URL_FILE=os.path.join("~", ".restbackup-management-api-access-url")
 DEFAULT_PASS_FILE=os.path.join("~", ".restbackup-file-encryption-passphrase")
+USER_AGENT = "restbackup-cli/%s" % __version__
 
 def main(args):
     parser = optparse.OptionParser(usage=USAGE, add_help_option=False)
     parser.set_defaults(backup_url_file=DEFAULT_BACKUP_URL_FILE,
-                        man_url_file=DEFAULT_MAN_URL_FILE,
                         passphrase_file=DEFAULT_PASS_FILE,
                         access_url=None)
     parser.add_option("-b", action="store", type="string",
                       dest="backup_url_file",
                       help="file with backup api access url, default   %s" \
                           % DEFAULT_BACKUP_URL_FILE)
-    parser.add_option("-m", action="store", type="string", dest="man_url_file",
-                      help="file with management api access url, default %s" \
-                          % DEFAULT_MAN_URL_FILE)
     parser.add_option("-u", action="store", type="string", dest="access_url",
                       help="access url, ignores -b and -m arguments")
     parser.add_option("-f", action="store_true", dest="force", 
@@ -94,21 +96,6 @@ def main(args):
             else:
                 parser.error("Incorrect number of arguments for %r command" \
                                  % command)
-        elif command in ["create-backup-account", "get-backup-account", 
-                         "delete-backup-account", "list-backup-accounts"]:
-            if access_url == None:
-                access_url = read_secret_from_file(options.man_url_file)
-            if command == "create-backup-account" and len(params) == 2:
-                return create_backup_account(access_url, params[0], params[1])
-            elif command == "get-backup-account" and len(params) == 1:
-                return get_backup_account(access_url, params[0])
-            elif command == "delete-backup-account" and len(params) == 1:
-                return delete_backup_account(access_url, params[0])
-            elif command == "list-backup-accounts" and not params:
-                return list_backup_accounts(access_url)
-            else:
-                parser.error("Incorrect number of arguments for %r command" 
-                             % command)
         else:
             parser.error("Unknown command %r" % command)
     except restbackup.RestBackupException, e:
@@ -140,7 +127,7 @@ def read_secret_from_file(filename):
         return f.read().strip()
 
 def put_file(access_url, passphrase, local_file_name, remote_file_name=None):
-    backup_api = restbackup.BackupApiCaller(access_url)
+    backup_api = restbackup.BackupApiCaller(access_url, USER_AGENT)
     reader = restbackup.FileReader(local_file_name)
     if remote_file_name == None:
         remote_file_name = os.path.basename(local_file_name)
@@ -153,16 +140,13 @@ def put_file(access_url, passphrase, local_file_name, remote_file_name=None):
             backup_api.put_encrypted(passphrase, name=remote_file_name,
                                      data=reader)
         return 0
-    except restbackup.RestBackupException, e:
-        if str(e).startswith("405"):
-            print >>sys.stdout, "ERROR: %s (Cannot overwrite existing file)" \
-                % str(e)
-            return -1
-        raise
+    except restbackup.RestBackup405MethodNotAllowed, e:
+        print >>sys.stdout, "ERROR: %s (Cannot overwrite existing file)" % str(e)
+        return 1
 
 def get_file(access_url, passphrase, force, remote_file_name,
              local_file_name=None):
-    backup_api = restbackup.BackupApiCaller(access_url)
+    backup_api = restbackup.BackupApiCaller(access_url, USER_AGENT)
     if not remote_file_name.startswith('/'):
         remote_file_name = '/' + remote_file_name
     if local_file_name == None:
@@ -183,45 +167,10 @@ def get_file(access_url, passphrase, force, remote_file_name,
     return 0
 
 def list_files(access_url):
-    backup_api = restbackup.BackupApiCaller(access_url)
-    for (name,size,date,createtime,deletetime) in backup_api.list():
+    backup_api = restbackup.BackupApiCaller(access_url, USER_AGENT)
+    for (name,size,createtime) in backup_api.list():
+        date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(createtime))
         print date, size, name
-    return 0
-
-def create_backup_account(access_url, description, retain_uploads_days):
-    try:
-        man_api = restbackup.ManagementApiCaller(access_url)
-        b = man_api.create_backup_account(description, retain_uploads_days)
-        print "account_id retain_uploads_days access_url description"
-        print b.account_id, b.retain_uploads_days, b.access_url, b.description
-        return 0
-    except restbackup.RestBackupException, e:
-        if str(e).startswith("405"):
-            print >>sys.stdout, "ERROR: %s (Wrong access url type) Check " \
-                "that you are specifying a Management API Access URL, not a" \
-                "Backup API Access URL.)" % str(e)
-            return -1
-        raise
-
-def get_backup_account(access_url, account_id):
-    man_api = restbackup.ManagementApiCaller(access_url)
-    b = man_api.get_backup_account(account_id)
-    print "account_id retain_uploads_days access_url description"
-    print b.account_id, b.retain_uploads_days, b.access_url, b.description
-    return 0
-
-def delete_backup_account(access_url, account_id):
-    man_api = restbackup.ManagementApiCaller(access_url)
-    b = man_api.delete_backup_account(account_id)
-    print "Deleted", account_id
-    return 0
-
-def list_backup_accounts(access_url):
-    man_api = restbackup.ManagementApiCaller(access_url)
-    accounts = man_api.list_backup_accounts()
-    print "account_id retain_uploads_days description"
-    for (account_id, retain_uploads_days, description) in accounts:
-        print account_id, retain_uploads_days, description
     return 0
 
 def entry_point():

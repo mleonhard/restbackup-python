@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 __author__ = 'Michael Leonhard'
 __license__ = 'Copyright (C) 2011 Rest Backup LLC.  Use of this software is subject to the RestBackup.com Terms of Use, http://www.restbackup.com/terms'
-__version__ = '1.0'
+__version__ = '1.1'
 
 import datetime
 import getopt
@@ -24,7 +24,9 @@ Encryption is performed by the Chlorocrypt library.  It provides confidentiality
 with AES in CBC mode with a random IV.  Keys are derived with PBKDF2 using
 128-bit salts and 4096 rounds of HMAC-SHA-256.  Data is padded using the
 standard PKCS#5 method.  HMAC-SHA-256 is used for authentication and file
-integrity verificaiton.
+integrity verification.
+
+This tool works on Linux and Mac.  Windows is not supported at this time.
 """
 
 USAGE="""Usage: restbackup-tar [OPTIONS] COMMAND [args]
@@ -113,6 +115,7 @@ DEFAULT_SNAPSHOT_DIR=os.path.join("~",".restbackup-tar")
 DEFAULT_SNAPSHOT_FILE=os.path.join(DEFAULT_SNAPSHOT_DIR, "%(NAME)s.snapshot")
 DEFAULT_PASS_FILE=os.path.join("~", ".restbackup-file-encryption-passphrase")
 DEFAULT_NAME="backup"
+USER_AGENT = "restbackup-tar/%s" % __version__
 
 def cli_error(reason):
     print >>sys.stderr, str(reason)
@@ -213,13 +216,14 @@ def main(args):
         return 1
 
 def list_files(access_url):
-    backup_api = restbackup.BackupApiCaller(access_url)
-    for (name,size,date,createtime,deletetime) in backup_api.list():
+    backup_api = restbackup.BackupApiCaller(access_url, USER_AGENT)
+    for (name,size,createtime) in backup_api.list():
+        date = time.strftime("%Y%m%dT%H:%M:%SZ", time.gmtime(createtime))
         print "%s\t%s\t%s" % (date, size, name)
     return 0
 
 def backup(command, url, name, snapshot_file, passphrase, files):
-    backup_api = restbackup.BackupApiCaller(url)
+    backup_api = restbackup.BackupApiCaller(url, USER_AGENT)
     backup_name_file = snapshot_file + ".backupname"
     last_backup_level_file = snapshot_file + ".lastbackuplevel"
     
@@ -288,7 +292,7 @@ def backup(command, url, name, snapshot_file, passphrase, files):
     return 0
 
 def restore(access_url, passphrase, args):
-    backup_api = restbackup.BackupApiCaller(access_url)
+    backup_api = restbackup.BackupApiCaller(access_url, USER_AGENT)
     endpoint = "%s://%s" % (backup_api.scheme, backup_api.host)
     archive_name = args[0]
     files = args[1:]
@@ -324,8 +328,8 @@ def restore(access_url, passphrase, args):
             else:
                 reader = backup_api.get_encrypted(passphrase, name=remote_file)
             first = False
-        except restbackup.RestBackupException, e:
-            if str(e).startswith("404") and not level_specified and not first:
+        except restbackup.RestBackup404NotFoundException, e:
+            if not level_specified and not first:
                 print "Not found"
                 break
             else:

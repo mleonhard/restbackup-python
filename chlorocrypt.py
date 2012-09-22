@@ -32,7 +32,6 @@ import unittest
 try:
     from Crypto.Cipher import AES
 except ImportError:
-    print >>sys.stderr, "Using pyaes. Install PyCrypto for better performance."
     import pyaes as AES
 
 class DataDamagedException(IOError): pass

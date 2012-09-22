@@ -1,10 +1,9 @@
 RestBackup(tm) Client Library and Command-Line Tools
 ====================================================
 
-This module provides:
+This package provides:
 
-1. Client library for making calls to the RestBackup(tm) Backup and
-Management APIs
+1. Client library for making calls to the RestBackup(tm) Backup API
 
 1. Restbackup-cli tool for using the service from the command-line
 
@@ -40,48 +39,66 @@ Client Library
 ==============
 
 The restbackup.py module provides convenient classes for making calls
-to the RestBackup(tm) Backup and Management APIs.  These APIs are
-documented at
-[http://www.restbackup.com/developers](http://www.restbackup.com/developers).
-Encryption is performed by the Chlorocrypt library.
+to the RestBackup(tm) Backup API.  These API is documented at
+[http://www.restbackup.com/api](http://www.restbackup.com/api).
 
 Example usage:
 
     import restbackup
-    man_api_access_url = 'https://HF7X7S:7IQ5d11Mxw7xxQEW@us.restbackup.com/'
-    man_api = restbackup.ManagementApiCaller(man_api_access_url)
-    backup_api = man_api.create_backup_account('My Backup Account')
+    access_url = 'https://9WQ:By7brh@us.restbackup.com/'
+    backup_api = restbackup.BackupApiCaller(access_url, user_agent="Demo/1.0")
     
+    # Backup a string
     backup_api.put(name='/data-20110211', data='a string with data')
+    
+    # Retrieve the backup
     print backup_api.get(name='/data-20110211').read()
-    for (name,size,date,createtime,deletetime) in backup_api.list():
-        print name, size, date
     
-    backup_api = restbackup.BackupApiCaller('https://9WQ:By7brh@us.restbackup.com/')
-    reader = restbackup.FileReader('file-to-encrypt-and-upload')
-    backup_api.put_encrypted('passphrase', '/encrypted-file', reader)
+    # List backups
+    for (name,size,createtime) in backup_api.list():
+        print name, size, createtime
     
-    reader = backup_api.get_encrypted('passphrase', '/encrypted-file')
-    local_file = open('downloaded-and-decrypted-file', 'wb')
+    # Backup a file
+    reader = restbackup.FileReader('data-20110211.zip')
+    backup_api.put('/data-20110211.zip', reader)
+    
+    # Restore the file
+    reader = backup_api.get('/data-20110211.zip')
+    local_file = open('restored.data-20110211.zip', 'wb')
     while True:
         chunk = reader.read(65536)
         if not chunk:
             break
         local_file.write(chunk)
+    local_file.close()
+    
+    # Encrypt and Backup a file
+    reader = restbackup.FileReader('data-20110211.zip')
+    backup_api.put_encrypted('passphrase', '/data-20110211.zip.encrypted', reader)
+    
+    # Restore and decrypt the file
+    reader = backup_api.get_encrypted('passphrase', '/data-20110211.zip.encrypted')
+    local_file = open('restored.decrypted.data-20110211.zip', 'wb')
+    while True:
+        chunk = reader.read(65536)
+        if not chunk:
+            break
+        local_file.write(chunk)
+    local_file.close()
 
 
 Restbackup-CLI
 ==============
 
-The restbackup-cli program lets you interact with the Backup and
-Management APIs from the command line.  It can also encrypt your
-backup archives using the Chlorocrypt library.
+The restbackup-cli program lets you interact with the Backup API from
+the command line.  It can also encrypt your backup archives using the
+Chlorocrypt library.
 
 CLI Help:
 
     Usage: restbackup-cli [OPTIONS] COMMAND [args]
     
-    Backup API Commands:
+    Commands:
       put LOCAL_FILE [REMOTE_FILE]   Upload LOCAL_FILE and store as REMOTE_FILE
       get REMOTE_FILE [LOCAL_FILE]   Download REMOTE_FILE and save as LOCAL_FILE
       list                           List uploaded files
@@ -89,35 +106,50 @@ CLI Help:
       get-and-decrypt REMOTE [LOCAL] Download REMOTE, decrypt, and save as LOCAL
       make-random-passphrase         Generate a random 35-bit passphrase
     
-    Management API Commands:
-      create-backup-account DESCRIPTION RETAIN_UPLOADS_DAYS
-      get-backup-account ACCOUNT_ID
-      delete-backup-account ACCOUNT_ID
-      list-backup-accounts
-    
     Options:
       -b BACKUP_URL_FILE  file with backup api access url, default
                           ~\.restbackup-backup-api-access-url
-      -m MAN_URL_FILE     file with management api access url, default
-                          ~\.restbackup-management-api-access-url
       -u ACCESS_URL       access url, ignores -b and -m arguments
       -f                  allow overwrite of local file
       -p PASSPHRASE_FILE  file with encryption passphrase, default
                           ~\.restbackup-file-encryption-passphrase
       -h, --help          show the help message and usage examples
     
+    Encryption is performed by the Chlorocrypt library.  Uses AES in CBC mode for
+    confidentiality.  Derives keys from passphrase using 128-bit salt and PBKDF2
+    with 4096 rounds of HMAC-SHA-256.  Uses PKCS#5 padding.  Verifies file
+    integrity with SHA-256 HMACs.
+    
+    For faster operation, install the PyCrypto library:
+    http://www.dlitz.net/software/pycrypto/
+    http://www.voidspace.org.uk/python/modules.shtml#pycrypto
+    
     Examples:
-      restbackupcli.py put backup-20110615.tar.gz
-      restbackupcli.py get /backup-20110615.tar.gz ~/restored/backup-20110615.tar.gz
+      restbackupcli.py put data-20110615.tar.gz
+      restbackupcli.py get /data-20110615.tar.gz ~/restored/data-20110615.tar.gz
+      restbackupcli.py list
+    
+      restbackupcli.py make-random-passphrase >~/.restbackup-file-encryption-passphrase
+      cat ~/.restbackup-file-encryption-passphrase
+      (Write down the passphrase and keep a copy off-site!)
+      restbackupcli.py encrypt-and-put data-20110615.tgz
+      restbackupcli.py get-and-decrypt /data-20110615.tgz ~/restored-data-20110615.tgz
 
 
 Restbackup-tar Incremental Backup Tool
 ======================================
 
-Restbackup-tar is a command-line tool for performing incremental
-encrypted backups to RestBackup(tm) and restoring from any point in
-time.  Encryption is performed by the Chlorocrypt library.  For unix
-and Mac only.
+Restbackup-tar is a command-line tool for performing incremental encrypted
+backups to RestBackup(tm) and restoring from any point in time. Get your backup
+account at http://www.restbackup.com/
+
+Encryption is performed by the Chlorocrypt library.  It provides confidentiality
+with AES in CBC mode with a random IV.  Keys are derived with PBKDF2 using
+128-bit salts and 4096 rounds of HMAC-SHA-256.  Data is padded using the
+standard PKCS#5 method.  HMAC-SHA-256 is used for authentication and file
+integrity verification.
+
+This tool works on Linux and Mac.  Windows is not supported at this time.
 
     Usage: restbackup-tar [OPTIONS] COMMAND [args]
     
@@ -142,8 +174,6 @@ and Mac only.
      -p PASSPHRASE_FILE  file with encryption passphrase, default
                          ~/.restbackup-file-encryption-passphrase
                          Generate one with "restbackup-cli make-random-passphrase"
-
-Example Usage:
 
 Setup:
 
